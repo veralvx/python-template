@@ -86,16 +86,31 @@ just build    # every package's sdist and wheel, into dist/
 ## Releasing (maintainers)
 
 {% if project_kind == "workspace" -%}
-Each package is released on its own: `just release <package> <major|minor|patch>`, from a clean
-`main` up to date with `origin`.
+Each package is released on its own, from a clean `main` up to date with `origin`:
+
+```sh
+just changelog <package> --unreleased   # the section the release will write
+just release <package> <major|minor|patch>
+```
+
+The tag is `<package>-v<version>`.
 {%- else -%}
-`just release <major|minor|patch>`, from a clean `main` up to date with `origin`.
-{%- endif %} The recipe shows every step, in order: it refuses a release with nothing in it, runs
+From a clean `main` up to date with `origin`:
+
+```sh
+just changelog --unreleased   # the section the release will write
+just release <major|minor|patch>
+```
+
+The tag is `v<version>`.
+{%- endif %}
+
+The recipe shows every step, in order: it refuses a release with nothing in it, runs
 `just checks`, sets the version (`uv version --bump`, the lock with it), writes the changelog
-(git-cliff), commits, tags {% if project_kind == "workspace" %}`<package>-v<version>`{% else %}`v<version>`{% endif %} and pushes the commit and the tag together. The
-first release is the version `pyproject.toml` declares, whatever the level. The tag runs
-`publish.yml` (PyPI, by Trusted Publishing) and `release.yml` (the GitHub release, its notes the
-changelog's new section). `just changelog {% if project_kind == "workspace" %}<package> {% endif %}--unreleased` shows that section before.
+(git-cliff), commits, tags, and pushes the commit and the tag together. The first release is the
+version `pyproject.toml` declares, whatever the level. The tag runs `publish.yml` (PyPI, by
+Trusted Publishing) and `release.yml` (the GitHub release, its notes the changelog's new
+section).
 
 - The commits since the last tag must hold a change a user meets (`feat`, `fix`, `perf`,
   `build`...): `chore`, `ci` and `style` alone make no release.

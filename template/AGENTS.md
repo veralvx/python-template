@@ -36,8 +36,10 @@ process = subprocess.run(argv, check=False)  # noqa: S603 -- argv is ours, never
 value = untyped()  # pyright: ignore[reportAny] -- the library is unannotated
 ```
 
-Name the rule: a bare `# noqa` or `# type: ignore` is itself an error (`PGH004`,
-basedpyright's `reportIgnoreCommentWithoutRule`), and one that stops applying is reported too
+Name the rule, and silence basedpyright with `# pyright: ignore[rule]` alone: it does not honour
+`# type: ignore` here, so one suppresses nothing, and nothing reports it when stale. A bare
+`# noqa` is itself an error (`PGH004`), as are a bare `# type: ignore` (`PGH003`) and a bare
+`# pyright: ignore` (`reportIgnoreCommentWithoutRule`); one that stops applying is reported
 (`RUF100`, `reportUnnecessaryTypeIgnoreComment`), so a justification cannot outlive the code it
 justified.
 

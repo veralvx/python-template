@@ -154,6 +154,8 @@ release *args:
         echo "error: a release is cut from main" >&2; exit 1
     fi
     git fetch origin
+    git rev-parse --quiet --verify origin/main > /dev/null \
+        || { echo "error: origin has no main: push it first" >&2; exit 1; }
     if [ "$(git rev-list --count HEAD..origin/main)" -ne 0 ]; then
         echo "error: main is behind origin/main: pull first" >&2; exit 1
     fi
@@ -202,7 +204,8 @@ release *args:
         "${version_of[@]}" --bump "$level" --no-sync > /dev/null
     fi
     if [ "$("${version_of[@]}")" != "$version" ]; then
-        echo "error: the version written is not $version" >&2; exit 1
+        # an explicit exit runs no ERR trap: restore first
+        echo "error: the version written is not $version" >&2; restore; exit 1
     fi
 
     # 6. The changelog, the release's section on top

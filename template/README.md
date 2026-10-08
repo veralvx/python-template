@@ -26,10 +26,10 @@ Then, in whichever order suits you:
   that CI never gated.
 - Enable private vulnerability reporting (Settings → Code security): it is off by default, and
   [SECURITY.md](SECURITY.md) and the issue form point to it.
-- Add a pending publisher on [PyPI](https://pypi.org/manage/account/publishing/) for
-  {% if project_kind == "workspace" %}each package (`{{project-name}}` and `{{project-name}}-core`){% else %}`{{project-name}}`{% endif %}:
-  this repository, the workflow `publish.yml`, the environment `pypi`. A release tag then
-  publishes without a stored token.
+- Add a pending publisher on [PyPI](https://pypi.org/manage/account/publishing/) for each
+  package: this repository, the workflow `publish.yml`, the environment `pypi`. A release tag
+  then publishes without a stored token. {% if project_kind == "workspace" %}The packages are
+  `{{project-name}}` and `{{project-name}}-core`.{% else %}The package is `{{project-name}}`.{% endif %}
 - Run `just checks` once to confirm your tools are complete: a step that stops on a missing
   command names it ([CONTRIBUTING.md](CONTRIBUTING.md) lists them; `nix develop` has them all).
 - `just install-hooks`, if you want the lock, ruff, dprint and commit-message checks run by git
@@ -98,12 +98,10 @@ assert greeting("Ada") == "Hello, Ada!"
 {% if project_kind == "workspace" -%}
 ## Layout
 
-```
-pyproject.toml                    the workspace: its tool groups and configuration
-packages/{{project-name}}/        the command line -- argument handling only
-packages/{{project-name}}-core/   the library -- everything worth testing
-tests/                            the workspace as a whole
-```
+- `pyproject.toml` -- the workspace: its tool groups and configuration
+- `packages/{{project-name}}/` -- the command line: argument handling only
+- `packages/{{project-name}}-core/` -- the library: everything worth testing
+- `tests/` -- the workspace as a whole
 
 Each member is its own distribution, with its own version, changelog and tag
 (`<package>-v<version>`): `just release <package> <level>`. A new member is a folder under
