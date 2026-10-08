@@ -8,10 +8,12 @@ name: Template smoke test
 #   render-check   tools/render-check.py: every prompt combination renders and parses; the
 #                  copies agree; the manifests describe their layout
 #   combinations   every kind x licence x email answer through the real cargo-generate: each
-#                  manifest parses, each licence file is where its choice puts it, dprint passes
+#                  manifest parses, each licence file is where its choice puts it, dprint passes;
+#                  a project name that is no Python identifier refused
 #   generate       for each kind, in the generated flake's dev shell (its pinned tools): the
 #                  lock written, the git hooks refusing what CI would, `just checks` -- the
-#                  flake's checks built last -- and real releases against a bare remote
+#                  flake's checks built last -- and, but for lib (bin's recipe), real releases
+#                  against a bare remote, each tag read as release.yml and publish.yml read it
 
 on:
   push:
@@ -105,6 +107,19 @@ jobs:
                 (cd "$dir" && dprint check)
               done
             done
+          done
+
+      - name: A name that is no Python identifier is refused
+        run: |
+          set -euo pipefail
+          for name in 3d-tool async; do
+            if cargo generate --path "$GITHUB_WORKSPACE" template --name "$name" \
+              --destination "$RUNNER_TEMP/refused" --silent -d project_kind=bin \
+              -d "description=Does a thing." -d "author_name=Jane Doe" -d author_email= \
+              -d github_username=jane -d license=MIT -d python_min=3.13 -d keywords=; then
+              echo "::error::$name was not refused" >&2
+              exit 1
+            fi
           done
 
   generate:
@@ -215,8 +230,13 @@ jobs:
             run git commit --quiet -am "fix(cli): a command-line fix"
             run git push --quiet origin main
             run just release demo patch
-            test "$(git -C "$RUNNER_TEMP/origin.git" tag | tr '\n' ' ')" = "demo-core-v0.1.0 demo-v0.1.0 "
-            grep -q '^## \[0.1.0\](https://github.com/jane/demo/tree/demo-core-v0.1.0)' packages/demo-core/CHANGELOG.md
+            echo "change" >> packages/demo-core/README.md
+            run git commit --quiet -am "feat(core)!: a breaking change"
+            run git push --quiet origin main
+            run just release demo-core minor
+            test "$(git -C "$RUNNER_TEMP/origin.git" tag | tr '\n' ' ')" = "demo-core-v0.1.0 demo-core-v0.2.0 demo-v0.1.0 "
+            grep -q '^version = "0.2.0"' packages/demo-core/pyproject.toml
+            grep -q '^## \[0.2.0\](https://github.com/jane/demo/compare/demo-core-v0.1.0..demo-core-v0.2.0)' packages/demo-core/CHANGELOG.md
             if run just release demo patch; then
               echo "::error::a release with nothing new was not refused" >&2
               exit 1
@@ -236,3 +256,11 @@ jobs:
               exit 1
             fi
           fi
+          # each tag as release.yml and publish.yml read it, at its own commit
+          for tag in $(git tag); do
+            git checkout --quiet "$tag"
+            read -r package folder version < <(run .github/package-tag.sh "$tag")
+            test "$package-v$version" = "$tag" || test "v$version" = "$tag"
+            run .github/release-notes.sh "$folder/CHANGELOG.md" "$version" > /dev/null
+          done
+          git checkout --quiet main
