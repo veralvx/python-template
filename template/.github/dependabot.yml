@@ -1,0 +1,32 @@
+# GitHub Actions alone: they are pinned to commits, each release in a comment, and Dependabot
+# moves both (docs.github.com, "Dependabot supported ecosystems"). No uv entry: every pin in
+# pyproject.toml's dependency groups is the flake's nixpkgs' version, so uv's verdict is Nix's --
+# the pins move with nixpkgs (`nix flake update`, then the `pins` check names each one to move),
+# and security.yml audits the lock daily. Add a uv entry, with the dev group ignored, once the
+# packages have dependencies of their own.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+      time: "07:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "actions"
+    groups:
+      # minor and patch updates in one pull request (dependabot-automerge.yml merges it once the
+      # checks pass); a major one alone, for review
+      actions-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    cooldown:
+      default-days: 3 # the one cooldown key GitHub Actions takes

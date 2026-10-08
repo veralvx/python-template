@@ -1,0 +1,16 @@
+# uv's environment, and what Python, the tools and the build leave behind
+/.venv
+__pycache__/
+*.py[co]
+/dist
+/build
+*.egg-info/
+.coverage
+.coverage.*
+/htmlcov
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+# Nix's build links, direnv's cache
+/result*
+/.direnv

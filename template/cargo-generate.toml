@@ -1,0 +1,115 @@
+# cargo-generate (language-agnostic, Liquid): `cargo generate --git <this repository> template`.
+#
+#   ignore  -> file is not copied into the generated project at all
+#   exclude -> file IS copied, but is never processed by Liquid
+
+[template]
+# 0.25 is the version this template is verified with: `ignore` below names paths as the template
+# spells them, which relies on its removing them before rendering (see the note there)
+cargo_generate_version = ">=0.25.0"
+
+# Every file below holds double-brace or brace-percent syntax that belongs to some *other*
+# templating language and must survive verbatim:
+#
+#   .github/workflows/*  GitHub Actions expressions; some use `||` inside an interpolation,
+#                        which is not valid Liquid and would abort generation
+#   cliff.toml           git-cliff's Tera templates. Its conditionals happen to *be* valid
+#                        Liquid, so they would be evaluated silently and the changelog gutted
+#   justfile             just's own interpolation shares Liquid's double-brace syntax
+#   nix/**, .githooks/** nothing project-specific (the Nix files read the pyproject files at
+#                        evaluation); verbatim, so no `{{` in them is ever taken for Liquid
+#
+# A file that fails to render is copied unrendered without a word (cargo-generate 0.25,
+# measured), so a Liquid error shows only in tools/render-check.py, which renders strictly.
+exclude = [".github/workflows/**", ".githooks/**", "cliff.toml", "justfile", "nix/**"]
+
+[placeholders.description]
+type = "string"
+prompt = "One-line description (PyPI's summary)"
+default = "A Python package."
+# it lands in TOML and Nix strings: a `"` or `\` would end or escape them; `$` is refused, as `${`
+# would interpolate in Nix
+regex = '^[^"\\$]+$'
+
+[placeholders.project_kind]
+type = "string"
+prompt = "What should this build? (workspace = a library and a command line using it, under packages/, each released on its own)"
+choices = ["bin", "lib", "workspace"]
+default = "bin"
+
+[placeholders.author_name]
+type = "string"
+prompt = "Author name (pyproject's authors and the licence's copyright line)"
+# it lands in TOML strings: a `"` or `\` would end or escape them
+regex = '^[^\s"\\][^"\\]*$'
+
+[placeholders.author_email]
+type = "string"
+prompt = "Author email (leave empty to omit it everywhere)"
+default = ""
+regex = '^$|^[^@\s"\\]+@[^@\s"\\]+\.[^@\s"\\]+$'
+
+[placeholders.github_username]
+type = "string"
+prompt = "GitHub user or org (repository URL, security advisories)"
+regex = '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$'
+
+[placeholders.license]
+type = "string"
+prompt = "License"
+choices = ["MIT OR Apache-2.0", "MIT", "Apache-2.0"]
+default = "MIT OR Apache-2.0"
+
+[placeholders.python_min]
+type = "string"
+prompt = "Oldest Python supported (requires-python's floor; every newer one is tested too)"
+choices = ["3.12", "3.13", "3.14"]
+default = "3.13"
+
+[placeholders.keywords]
+type = "string"
+prompt = "PyPI keywords, comma separated (may be empty)"
+default = ""
+regex = '^$|^\s*[A-Za-z0-9][A-Za-z0-9._+-]*(\s*,\s*[A-Za-z0-9][A-Za-z0-9._+-]*)*\s*$'
+
+# --- conditional file selection ----------------------------------------------------------------
+#
+# NOTE: `ignore` entries are literal paths relative to the template root, NOT globs -- a glob
+# would resolve to a path that does not exist and be skipped silently; `exclude` above *is*
+# glob-based. The removal happens BEFORE expansion, on the template's own file names
+# (cargo-generate 0.25, `ignore_me::remove_unneeded_files`): an entry names a path as it is
+# spelled here, `{{crate_name}}` and all.
+
+# Every package carries its licence texts: a workspace member's sdist holds only its own folder,
+# so each member keeps copies of the root's.
+[conditional.'license == "MIT"']
+ignore = [
+    "LICENSE-APACHE",
+    "packages/{{project-name}}/LICENSE-APACHE",
+    "packages/{{project-name}}-core/LICENSE-APACHE",
+]
+
+[conditional.'license == "Apache-2.0"']
+ignore = [
+    "LICENSE-MIT",
+    "packages/{{project-name}}/LICENSE-MIT",
+    "packages/{{project-name}}-core/LICENSE-MIT",
+]
+
+# A library has no command line.
+[conditional.'project_kind == "lib"']
+ignore = [
+    "src/{{crate_name}}/cli.py",
+    "src/{{crate_name}}/__main__.py",
+    "tests/test_cli.py",
+    "tests/test_workspace.py",
+    "packages",
+]
+
+[conditional.'project_kind == "bin"']
+ignore = ["tests/test_workspace.py", "packages"]
+
+# The workspace keeps its sources in its members under packages/; the root's tests check the
+# workspace as a whole.
+[conditional.'project_kind == "workspace"']
+ignore = ["src", "tests/test_{{crate_name}}.py", "tests/test_cli.py"]

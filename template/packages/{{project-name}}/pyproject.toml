@@ -1,0 +1,60 @@
+[build-system]
+# hatchling 1.26.2: license-files in PEP 639's final form, and metadata older readers take
+# (hatchling's changelog); the flake builds with nixpkgs' own
+requires = ["hatchling>=1.26.2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "{{project-name}}"
+version = "0.1.0"
+description = "{{description}}"
+readme = "README.md"
+license = "{{license}}"
+{% if license == "MIT OR Apache-2.0" -%}
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
+{%- elsif license == "MIT" -%}
+license-files = ["LICENSE-MIT"]
+{%- else -%}
+license-files = ["LICENSE-APACHE"]
+{%- endif %}
+requires-python = ">={{python_min}}"
+authors = [{ name = "{{author_name}}"{% if author_email != "" %}, email = "{{author_email}}"{% endif %} }]
+{% if keywords != "" -%}
+{% assign kw_list = keywords | split: "," -%}
+keywords = [{% for k in kw_list %}"{{ k | strip }}"{% unless forloop.last %}, {% endunless %}{% endfor %}]
+{% endif -%}
+# https://pypi.org/classifiers/ -- no License :: one: PEP 639's `license` replaces them
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+{%- if python_min == "3.12" %}
+    "Programming Language :: Python :: 3.12",
+{%- endif %}
+{%- if python_min != "3.14" %}
+    "Programming Language :: Python :: 3.13",
+{%- endif %}
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+dependencies = ["{{project-name}}-core>=0.1.0"]
+
+[project.scripts]
+{{project-name}} = "{{crate_name}}.cli:main"
+
+[project.urls]
+Changelog = "https://github.com/{{github_username}}/{{project-name}}/blob/main/packages/{{project-name}}/CHANGELOG.md"
+Homepage = "https://github.com/{{github_username}}/{{project-name}}/tree/main/packages/{{project-name}}"
+Issues = "https://github.com/{{github_username}}/{{project-name}}/issues"
+Repository = "https://github.com/{{github_username}}/{{project-name}}"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/{{crate_name}}"]
+
+# the library from the workspace, not PyPI -- for uv alone: `uv build --no-sources` (publish.yml)
+# builds with the requirement above, as anyone installing it from PyPI meets it
+[tool.uv.sources]
+{{project-name}}-core = { workspace = true }
