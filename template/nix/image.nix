@@ -1,5 +1,6 @@
 # The command as an OCI image, for Linux: dockerTools' layered image of its package's closure,
-# nothing else -- no shell, no base image. `nix build .#image` gives the gzipped docker-archive;
+# nothing else -- no base image, no /bin/sh (its wrapper's bash is in the closure, by store
+# path). `nix build .#image` gives the gzipped docker-archive;
 # `.#image.stream`, the script that streams it uncompressed (image.yml's: no second copy of the
 # closure in the store). Nothing project-specific: read from the package.
 { pkgs, package }:

@@ -50,9 +50,9 @@
           };
         }
       ) self.packages;
-
-{%- if project_kind != "lib" and container_image %}
-      # the image built is checked too: its layers, from the command's closure
+{% if project_kind != "lib" and container_image %}
+      # the image built is checked too -- its layers from the command's closure, which the
+      # stream alone would not run -- at the cost of its gzipped copy in the store
       checks = forAllSystems (
         pkgs:
         import ./nix/checks.nix { inherit pkgs; }

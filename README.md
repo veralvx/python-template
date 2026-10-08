@@ -94,7 +94,7 @@ and (here) a choice and a line in `template/.python-versions`.
 ### The OCI image
 
 With `container_image`, the flake has an `image` on Linux: `dockerTools.buildLayeredImage` of the
-command's package -- its closure alone, no base image and no shell, run as `nobody`, labelled
+command's package -- its closure alone, no base image and no `/bin/sh`, run as `nobody`, labelled
 for GHCR. `nix build .#image` gives the gzipped docker-archive and the flake's checks build it;
 `.#image.stream` streams it uncompressed, sparing the store a second copy of the closure.
 `image.yml`, on the command's release tag, streams it into Docker on amd64 and arm64, runs it,
@@ -175,7 +175,7 @@ python3 -m venv .venv    # Python 3.11+ (tomllib)
 .venv/bin/python tools/render-check.py
 ```
 
-`tools/render-check.py` renders every templated file for all 90 combinations of `project_kind`
+`tools/render-check.py` renders every templated file for all 108 combinations of `project_kind`
 (with the image or without; a lib with it unasked, or given anyway) × `license` × `python_min` ×
 empty-or-present email and keywords, then checks that nothing is
 left unexpanded and that the result parses as TOML, YAML, JSON and -- with `nix-instantiate` on

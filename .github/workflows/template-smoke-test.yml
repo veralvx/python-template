@@ -229,7 +229,8 @@ jobs:
         working-directory: ${{ runner.temp }}/generated/demo
         run: |
           set -euo pipefail
-          "$(nix build --no-link --print-out-paths .#image.stream)" | docker load
+          stream="$(nix build --no-link --print-out-paths .#image.stream)"
+          "$stream" | docker load
           test "$(docker run --rm demo:0.1.0 --version)" = "demo 0.1.0"
           test "$(docker inspect --format '{{ .Config.User }}' demo:0.1.0)" = "65534:65534"
           test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' demo:0.1.0)" \

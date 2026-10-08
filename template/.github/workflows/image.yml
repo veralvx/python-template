@@ -2,7 +2,8 @@
 # the flake's `image` (nix/image.nix) built on each Linux architecture, run once, pushed per
 # architecture, then joined under one multi-architecture tag, <version> (and `latest` for a final
 # release). The job's token pushes: no secret stored. A first push is private (GHCR's default):
-# make the package public in its settings once.
+# make the package public in its settings once. The per-architecture tags (<version>-amd64,
+# <version>-arm64) stay, the multi-architecture tag's parts.
 name: Image
 
 on:
@@ -36,9 +37,9 @@ jobs:
           # the image is the command's: the package with [project.scripts]
           command=false
           if grep -q '^\[project\.scripts\]' "$folder/pyproject.toml"; then command=true; fi
-          # PEP 440: a pre-release (a, b, rc) or a development release is never `latest`
-          latest=true
-          if [[ $version =~ (a|b|rc|\.dev)[0-9]+ ]]; then latest=false; fi
+          # `latest`: a final release alone (PEP 440's normalised form: N.N.N, maybe .postN)
+          latest=false
+          if [[ $version =~ ^[0-9]+(\.[0-9]+)*(\.post[0-9]+)?$ ]]; then latest=true; fi
           {
             echo "command=$command"
             echo "version=$version"
@@ -75,7 +76,8 @@ jobs:
           set -euo pipefail
           repository="ghcr.io/${GITHUB_REPOSITORY,,}"
           # streamed into docker: no compressed copy of the closure in the store
-          "$(nix build --no-link --print-out-paths .#image.stream)" | docker load
+          stream="$(nix build --no-link --print-out-paths .#image.stream)"
+          "$stream" | docker load
           loaded="$(nix eval --raw .#image.imageName):$(nix eval --raw .#image.imageTag)"
           # the image as a user runs it: its entrypoint, as its user
           expected="$(nix eval --raw .#default.meta.mainProgram) $VERSION"
