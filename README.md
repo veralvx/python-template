@@ -236,7 +236,10 @@ Also confirmed by running it:
 - **The flake of every combination** evaluates on all three systems (`nix flake check --no-build
   --all-systems`, Nix 2.34.6, the shipped flake.lock's nixpkgs) and is nixfmt-clean; its `pins`
   check finds no stale pin, and finds a mutated one. The workspace's command package takes the
-  core's derivation as its dependency; the dev shell's Python is the floor.
+  core's derivation as its dependency; the dev shell's Python is the floor. Every package is a
+  Python module (a Python environment takes a bin's library; the command is the same derivation),
+  and each wheel's source holds the readme and the files license-files names -- a renamed
+  `LICENSE` reached hatchling's wheel only once it was read from there.
 - **The image prompt**: all 180 combinations with it (`bin` and `workspace` with the image or
   without) pass dprint, nixfmt, actionlint and shellcheck and evaluate on all three systems;
   the image, its check and its workflow exist exactly where chosen, on Linux alone, and five
