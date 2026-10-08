@@ -5,8 +5,9 @@
 # (each a folder, or a `folder/*` glob of them).
 #
 # A dependency that is a member is that member's package; any other is nixpkgs' Python package
-# of its normalised name (python3Packages.<name>) -- one nixpkgs lacks, or names otherwise, fails
-# evaluation naming it, to be mapped in `nixpkgsName` below.
+# of its normalised name (python3Packages.<name>). One nixpkgs names otherwise, or one with
+# extras, a marker or a URL -- which a name alone cannot honour -- fails evaluation naming it,
+# until `overrides` below gives its packages.
 {
   pkgs,
   # the oldest Python .python-versions lists: the project's floor
@@ -26,7 +27,9 @@ let
           glob = builtins.match "(.*)/\\*" member;
           parent = ../. + "/${lib.head glob}";
         in
-        if glob == null then
+        if glob == null && lib.hasInfix "*" member then
+          throw "pyproject.toml: workspace member ${member}: only a folder, or folder/*, is read here"
+        else if glob == null then
           [ (../. + "/${member}") ]
         else
           lib.mapAttrsToList (name: _: parent + "/${name}") (
@@ -43,8 +46,13 @@ let
   # a PEP 508 requirement's name: what precedes its extras, version, marker or URL
   requirementName =
     requirement: normalise (lib.head (builtins.match "[[:space:]]*([A-Za-z0-9._-]+).*" requirement));
-  # nixpkgs' attribute for a PyPI name, where the two differ: add entries as they come up
-  nixpkgsName = name: { }.${name} or name;
+  # a requirement's packages where its name alone is not them, keyed by its normalised name: one
+  # nixpkgs names otherwise, or with extras, a marker or a URL. For example:
+  #   pywin32 = ps: [ ];                  (`; sys_platform == 'win32'`: nothing here)
+  #   httpx = ps: [ ps.httpx ps.h2 ];     (`httpx[http2]`: the extra's packages too)
+  overrides = { };
+  # extras, a marker, a URL: what a name alone cannot honour
+  plain = requirement: builtins.match ".*[][;@].*" requirement == null;
 
   manifests = map (folder: {
     inherit folder;
@@ -72,10 +80,16 @@ let
           name = requirementName requirement;
         in
         if lib.elem name memberNames then
-          self.${name}
+          [ self.${name} ]
+        else if overrides ? ${name} then
+          overrides.${name} python3Packages
+        else if !plain requirement then
+          throw "${project.name}: ${requirement} has extras, a marker or a URL: give its packages in nix/packages.nix's overrides"
         else
-          python3Packages.${nixpkgsName name}
-          or (throw "${project.name}: nixpkgs has no python3Packages.${nixpkgsName name} for ${requirement}");
+          [
+            python3Packages.${name}
+              or (throw "${project.name}: nixpkgs has no python3Packages.${name} for ${requirement}: give its packages in nix/packages.nix's overrides")
+          ];
       builder =
         if scripts == { } then
           python3Packages.buildPythonPackage
@@ -98,7 +112,7 @@ let
       disabled = python3Packages.pythonOlder oldest;
       pyproject = true;
       build-system = [ python3Packages.hatchling ];
-      dependencies = map dependency (project.dependencies or [ ]);
+      dependencies = lib.concatMap dependency (project.dependencies or [ ]);
       doCheck = false; # the tests run once, over every package: nix/checks.nix
       pythonImportsCheck = [ (lib.replaceStrings [ "-" ] [ "_" ] project.name) ];
       meta = {

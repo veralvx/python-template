@@ -184,7 +184,8 @@ flake's checks built, the changelog and the build, and real releases against a b
 The template is driven end to end with the real tools, not reasoned about. With
 **cargo-generate 0.25.0**, **uv 0.11.21** and the dev group's pins (ruff 0.15.14, basedpyright
 1.39.3, ty 0.0.38, pytest 9.0.3, coverage 7.14.1, vulture 2.14), **cocogitto 7.0.0**,
-**git-cliff 2.13.1**, **pip-audit 2.10.0** and **dprint 0.61.0** (markdown 0.26.0, TOML 0.9.0),
+**git-cliff 2.13.1**, **pip-audit 2.10.0** and **dprint 0.61.0** (markdown 0.26.0, TOML 0.9.0;
+nixpkgs' 0.54.0, the dev shell's, passes them too),
 all 18 kind × licence × email combinations -- each with a floor of 3.12, 3.13 or 3.14 -- generate
 and, after `uv lock` and their first commit, pass `just --fmt --check`, `lock-check`,
 `ruff-checks`, `static`, `vulture`, `pytest` (100%), `dprint-check`, `cog`, `audit`, `build` and
