@@ -64,8 +64,8 @@ it behind when validation rejects one. The retry then stops with
 Every answer is validated at the prompt: the description, the author and the email cannot hold a
 `"` or `\` (they land in TOML strings), nor the description a `$` (it lands in a Nix string). The
 project name is checked before anything is written (`template/validate-name.rhai`, a pre hook):
-its import name must be an ASCII Python identifier and no keyword -- `3d-tool` or `async` is
-refused.
+its import name must be an ASCII Python identifier, no keyword and no standard-library module's
+-- `3d-tool`, `async` or `calendar` is refused.
 
 ### What `project_kind` selects
 
@@ -135,8 +135,9 @@ rust-template: the pins are only right for the nixpkgs they were taken from.
   required checks pass. Read its setup comment: without required checks it merges what CI never
   gated.
 
-Every action is pinned to a commit, its version in a comment; Dependabot moves them. It watches
-the actions only: the dev group's pins move with nixpkgs, and pip-audit watches the lock.
+Every action is pinned to a commit, its version in a comment; Dependabot moves them -- in this
+repository too, the template's workflows with the smoke test's (`.github/dependabot.yml`). It
+watches the actions only: the dev group's pins move with nixpkgs, and pip-audit watches the lock.
 
 ### The changelog and `just release`
 

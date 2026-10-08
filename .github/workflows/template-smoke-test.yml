@@ -9,7 +9,7 @@ name: Template smoke test
 #                  copies agree; the manifests describe their layout
 #   combinations   every kind x licence x email answer through the real cargo-generate: each
 #                  manifest parses, each licence file is where its choice puts it, dprint passes;
-#                  a project name that is no Python identifier refused
+#                  a project name that is no Python import name refused
 #   generate       for each kind, in the generated flake's dev shell (its pinned tools): the
 #                  lock written, the git hooks refusing what CI would, `just checks` -- the
 #                  flake's checks built last -- and, but for lib (bin's recipe), real releases
@@ -109,17 +109,20 @@ jobs:
             done
           done
 
-      - name: A name that is no Python identifier is refused
+      - name: A name that is no Python import name is refused
         run: |
           set -euo pipefail
-          for name in 3d-tool async; do
+          # no identifier, a keyword, a standard-library module's (validate-name.rhai)
+          for name in 3d-tool async calendar; do
             if cargo generate --path "$GITHUB_WORKSPACE" template --name "$name" \
               --destination "$RUNNER_TEMP/refused" --silent -d project_kind=bin \
               -d "description=Does a thing." -d "author_name=Jane Doe" -d author_email= \
-              -d github_username=jane -d license=MIT -d python_min=3.13 -d keywords=; then
+              -d github_username=jane -d license=MIT -d python_min=3.13 -d keywords= \
+              > "$RUNNER_TEMP/refused.log" 2>&1; then
               echo "::error::$name was not refused" >&2
               exit 1
             fi
+            grep -q 'choose another name' "$RUNNER_TEMP/refused.log"
           done
 
   generate:
