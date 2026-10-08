@@ -30,7 +30,7 @@ jobs:
       - name: Build the tag's package
         # --no-sources: as any other builder sees it, without the workspace's sources (uv's guide)
         run: |
-          read -r package _ < <(.github/package-tag.sh "$GITHUB_REF_NAME")
+          read -r package _ _ < <(.github/package-tag.sh "$GITHUB_REF_NAME")
           uv build --package "$package" --no-sources
 
       - name: Publish

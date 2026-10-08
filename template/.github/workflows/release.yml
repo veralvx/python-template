@@ -26,11 +26,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          read -r package folder < <(.github/package-tag.sh "$GITHUB_REF_NAME")
-          version=${GITHUB_REF_NAME##*v}
+          read -r package folder version < <(.github/package-tag.sh "$GITHUB_REF_NAME")
           uv build --package "$package" --no-sources
-          # the first section, up to the second `## ` heading: the tag's own, or no release
-          awk '/^## /{n++} n==1' "$folder/CHANGELOG.md" > notes.md
-          [[ $(head -n 1 notes.md) == "## [$version]("* ]]
-          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
-            --title "$package $version" --notes-file notes.md
+          .github/release-notes.sh "$folder/CHANGELOG.md" "$version" > "$RUNNER_TEMP/notes.md"
+          # GitHub's "Latest" is the command's release: in a workspace, not its library's
+          latest=true
+          if [[ $folder != . ]] && ! grep -q '^\[project\.scripts\]' "$folder/pyproject.toml"; then
+            latest=false
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --latest="$latest" \
+            --title "$package $version" --notes-file "$RUNNER_TEMP/notes.md"
