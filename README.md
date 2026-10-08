@@ -64,8 +64,8 @@ it behind when validation rejects one. The retry then stops with
 Every answer is validated at the prompt: the description, the author and the email cannot hold a
 `"` or `\` (they land in TOML strings), nor the description a `$` (it lands in a Nix string). The
 project name is checked before anything is written (`template/validate-name.rhai`, a pre hook):
-its import name must be an ASCII Python identifier, no keyword and no standard-library module's
--- `3d-tool`, `async` or `calendar` is refused.
+its import name must be an ASCII Python identifier, no keyword and no standard-library
+module's: `3d-tool`, `async` or `calendar` is refused.
 
 ### What `project_kind` selects
 
@@ -192,10 +192,11 @@ The template is driven end to end with the real tools, not reasoned about. With
 1.39.3, ty 0.0.38, pytest 9.0.3, coverage 7.14.1, vulture 2.14), **cocogitto 7.0.0**,
 **git-cliff 2.13.1**, **pip-audit 2.10.0** and **dprint 0.61.0** (markdown 0.26.0, TOML 0.9.0;
 nixpkgs' 0.54.0, the dev shell's, passes them too),
-all 18 kind × licence × email combinations -- each with a floor of 3.12, 3.13 or 3.14 -- generate
-and, after `uv lock` and their first commit, pass `just --fmt --check`, `lock-check`,
-`ruff-checks`, `static`, `vulture`, `pytest` (100%), `dprint-check`, `cog`, `audit`, `build` and
-`changelog`.
+all 108 answer combinations -- kind × licence × floor × email (none, or a long name and address)
+× keywords (none, or ten) -- generate and, after `uv lock` and their first commit, pass
+`just --fmt --check`, `lock-check`, `ruff-checks`, `static`, `vulture`, `pytest` (100%),
+`dprint-check`, `cog`, `audit`, `build` and `changelog`; each wheel's and sdist's metadata matches
+its manifest; and each flake evaluates on all three systems.
 
 Also confirmed by running it:
 
@@ -203,10 +204,12 @@ Also confirmed by running it:
   here): a single package's first release tags `v0.1.0` (the declared version) and writes the
   changelog; a second, after a `fix!`, bumps to `v0.2.0` -- pyproject.toml and uv.lock -- with
   the breaking change first and a compare link; an empty third is refused. A workspace releases
-  `<name>-core` (`v0.1.0`, then `v1.0.0` on a breaking change) and `<name>` on their own, each
+  `<name>-core` (`v0.1.0`, then `v0.2.0` after a breaking change) and `<name>` on their own, each
   changelog from its folder's commits alone; a release naming no package, or one that is not a
-  member, is refused. `.github/package-tag.sh` maps each tag to its package and folder, and
-  refuses a tag whose version the package does not declare.
+  member, is refused. Each tag, at its own commit, is read back by `.github/package-tag.sh`
+  (package, folder, version -- a dev version's too) and `.github/release-notes.sh`, which refuse
+  a version the package does not declare or the changelog does not head. A push refused after
+  the release commit names the commands that finish it.
 - **The built distributions**: PEP 639 metadata (`License-Expression`, `License-File`), the
   licence texts, `py.typed`, the entry point, the member's requirement on the core.
 - **The git hooks**: an unformatted file, a message cog rejects and a pushed revert refused;
@@ -215,10 +218,14 @@ Also confirmed by running it:
   --all-systems`, Nix 2.34.6, the shipped flake.lock's nixpkgs) and is nixfmt-clean; its `pins`
   check finds no stale pin, and finds a mutated one. The workspace's command package takes the
   core's derivation as its dependency; the dev shell's Python is the floor.
+- **The name hook** refuses `3d-tool`, `async`, `calendar` and `Über-tool`, and is not copied.
+- **The types on every Python**: basedpyright and ty pass the starter code at 3.12, 3.13 and 3.14
+  (`--pythonversion`, as CI and the flake run them); the flake's test environment holds the dev
+  group's packages.
 - **render-check** catches each of seven planted defects: a member's requires-python drifted, a
   misspelled variable, a member's code drifted, a classifier dropped, a placeholder in an
   excluded file, a glob in `ignore`, a wrong `.python-versions`.
-- The workflows pass actionlint 1.7.12 with shellcheck; the hooks, the tag script and the
+- The workflows pass actionlint 1.7.12 with shellcheck; the hooks, the `.github` scripts and the
   justfile's script recipes pass shellcheck.
 
 What this does **not** cover -- the smoke-test workflow is what does:
