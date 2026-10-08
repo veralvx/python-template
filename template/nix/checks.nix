@@ -6,8 +6,9 @@
 let
   inherit (pkgs) lib;
 
-  # what the Python checks read: the repository less its tooling and its prose, so an edit there
-  # rebuilds none of them (lint reads its own list)
+  # what the Python checks read: the repository less the tooling and documents below, so an edit
+  # there rebuilds none of them (lint reads everything). The flake's source is git's files alone:
+  # no .venv or build output reaches either.
   source = lib.fileset.toSource {
     root = ../.;
     fileset = lib.fileset.difference ../. (
@@ -85,7 +86,8 @@ let
         cp -r ${source} "$TMPDIR/workspace"
         chmod -R u+w "$TMPDIR/workspace"
         cd "$TMPDIR/workspace"
-        python -m pytest -p no:cacheprovider --cov -n auto
+        # as many workers as the build's cores (nixpkgs' own pytest-xdist hook): not the machine's
+        python -m pytest -p no:cacheprovider --cov --numprocesses="$NIX_BUILD_CORES"
         touch $out
       '';
       "types-${suffix}" =

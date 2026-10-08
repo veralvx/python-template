@@ -77,27 +77,47 @@ let
     { folder, project }:
     let
       # requires-python, a floor alone (">=3.13"): an older interpreter refused at evaluation
-      floor = builtins.match ">=([0-9.]+)" project.requires-python;
-      oldest = lib.throwIf (floor == null) "${project.name}: requires-python is no floor alone" (
-        lib.head floor
-      );
+      floor =
+        let
+          matched = builtins.match ">=([0-9.]+)" project.requires-python;
+        in
+        lib.throwIf (matched == null) "${project.name}: requires-python is no floor alone" (
+          lib.head matched
+        );
       # the SPDX expression's identifiers, its operators and parentheses aside
       licences = lib.subtractLists [ "" "AND" "OR" ] (
         lib.filter lib.isString (builtins.split "[ ()]+" project.license)
       );
       scripts = project.scripts or { };
       # what hatchling reads besides the code: the readme, and the files license-files' globs
-      # match at the package's top level (Python's glob, as hatchling) -- a file missing from the
-      # source is left out of the wheel without a word
+      # match at the package's top level, as hatchling globs them (a `*` here takes dotfiles too:
+      # more in the source, never less) -- a file missing from the source is left out of the
+      # wheel without a word. A symlink is refused: the source keeps it as a link, which no
+      # longer resolves there.
       readme =
         if lib.isString (project.readme or null) then project.readme else project.readme.file or null;
-      topFiles = lib.attrNames (lib.filterAttrs (_: type: type == "regular") (builtins.readDir folder));
+      entries = lib.filterAttrs (_: type: type != "directory") (builtins.readDir folder);
       matching =
         glob:
         lib.throwIf (lib.hasInfix "/" glob)
           "${project.name}: license-files' ${glob} is below the package's top level, which alone is read here"
-          (lib.filter (name: builtins.match (globRegex glob) name != null) topFiles);
-      licenceFiles = lib.concatMap matching (project.license-files or hatchlingLicenceFiles);
+          (
+            lib.filter (
+              name:
+              builtins.match (globRegex glob) name != null
+              &&
+                lib.throwIf (entries.${name} == "symlink")
+                  "${project.name}: ${name} is a symlink, which its source would keep unresolved: copy the file"
+                  true
+            ) (lib.attrNames entries)
+          );
+      # hatchling's legacy table form too: { globs = [ ... ]; } or { paths = [ ... ]; }
+      licenceGlobs =
+        let
+          declared = project.license-files or hatchlingLicenceFiles;
+        in
+        if lib.isAttrs declared then declared.globs or declared.paths or [ ] else declared;
+      licenceFiles = lib.concatMap matching licenceGlobs;
       dependency =
         requirement:
         let
@@ -128,7 +148,7 @@ let
           ++ map (name: folder + "/${name}") (lib.optional (readme != null) readme ++ licenceFiles)
         );
       };
-      disabled = python3Packages.pythonOlder oldest;
+      disabled = python3Packages.pythonOlder floor;
       pyproject = true;
       build-system = [ python3Packages.hatchling ];
       dependencies = lib.concatMap dependency (project.dependencies or [ ]);
