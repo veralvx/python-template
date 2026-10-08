@@ -47,14 +47,19 @@ A reason that restates the rule ("-- we need a subprocess here") is not a reason
 the site safe.
 
 The one file-wide exception is a version gate (`if sys.version_info >= (3, 13):`). CI and the
-flake type-check each supported Python as itself, so one side of the gate is unreachable on one
-Python and the other on another, and a per-line ignore is reported unnecessary where its side is
-reachable. Keep the gates in a module of their own (`_compat.py`), and turn the rule off there
-alone, the reason on the line above:
+flake check each supported Python as itself, so each side of the gate is unreachable code to
+basedpyright on some Python, and uncovered on it -- a per-line pyright ignore is then reported
+unnecessary where its side runs. Keep the gates in a module of their own (`_compat.py`), the rule
+off there alone, and each side excluded from coverage with the Python it runs on:
 
 ```python
 # version gates: each side is unreachable on some supported Python
 # pyright: reportUnreachable=false
+
+if sys.version_info >= (3, 13):  # pragma: no cover -- 3.13 and later
+    from copy import replace
+else:  # pragma: no cover -- 3.12
+    ...
 ```
 
 ## 4. Commits
@@ -79,8 +84,8 @@ with `--no-verify`. `git revert` writes `Revert "..."`, which CI refuses: reword
 
 Run `just checks`. It is what CI runs: the lock, ruff, the types, dead code, the tests with every
 line and branch covered, dprint, the commit messages, pip-audit, and the flake's checks -- the
-tests and the types again on every supported Python, against the built packages. Reporting "done" on a change
-that has not passed it is the one thing that wastes the most time here.
+tests and the types again on every supported Python, against the built packages. Reporting
+"done" on a change that has not passed it is the one thing that wastes the most time here.
 
 If a check fails for reasons unrelated to your change, say so explicitly rather than working
 around it -- a broken check that everyone routes around stops protecting anything.

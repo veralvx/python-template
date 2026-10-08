@@ -1,7 +1,8 @@
 # This repository's actions: its own workflow's (`/`) and the template's, which a generated
 # project starts from (copied verbatim, so an update here is safe). Dependabot reads `/` as
 # .github/workflows, and any other directory as the YAML files in it (dependabot-core's
-# github_actions file fetcher). One group: both sets move together.
+# github_actions file fetcher). Grouped: one pull request per directory, so the two may land
+# apart -- merge them together.
 version: 2
 updates:
   - package-ecosystem: "github-actions"

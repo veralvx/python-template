@@ -3,7 +3,7 @@
 // say so -- a name that is:
 //   - no ASCII Python identifier (a PyPI name is ASCII): `3d-tool` would not parse;
 //   - a keyword (the language reference's list, 3.12-3.14): `async`;
-//   - a standard-library module (sys.stdlib_module_names, 3.12-3.14, lowercase): the import
+//   - a public standard-library module (sys.stdlib_module_names, 3.12-3.14): the import
 //     would find the standard library's first, as an editable install appends to sys.path.
 // cargo-generate runs the hook from the template and does not copy it into the project.
 let name = variable::get("crate_name");
