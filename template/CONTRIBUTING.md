@@ -19,8 +19,8 @@ nixpkgs' Python {{python_min}} (its own downloads off) -- or, installed yourself
 pip-audit and git-cliff need no install: `just audit` and `just changelog` run them from their
 own dependency groups, through uv.
 
-On NixOS, the wheels' executables (ruff, ty, basedpyright's node) need a standard dynamic loader:
-`programs.nix-ld.enable = true;`.
+On NixOS, the wheels' executables (ruff, ty, git-cliff, basedpyright's node) need a standard
+dynamic loader: `programs.nix-ld.enable = true;`.
 
 ## Setup
 
@@ -77,7 +77,9 @@ just build    # every package's sdist and wheel, into dist/
 
 A new dependency: `uv add` it. The flake builds with nixpkgs' package of the same name; `just nix`
 names one it cannot map -- another name in nixpkgs, extras, a marker -- to give in
-`nix/packages.nix`'s `overrides`.
+`nix/packages.nix`'s `overrides`. A new dev tool: `uv add --dev 'name==<version>'`, the flake's
+nixpkgs' version (its `pins` check holds it); a Python package there -- a pytest plugin, say --
+joins the flake's test environment too.
 
 ## Creating a Pull Request
 
@@ -97,7 +99,10 @@ just changelog <package> --unreleased   # the section the release will write
 just release <package> <major|minor|patch>
 ```
 
-The tag is `<package>-v<version>`.
+The tag is `<package>-v<version>`. Release `{{project-name}}-core` first when `{{project-name}}`
+needs its new version, and raise `{{project-name}}`'s requirement on it to that version: uv and
+the flake build against the workspace's copy, so nothing here sees a stale floor -- PyPI's users
+would.
 {%- else -%}
 From a clean `main` up to date with `origin`:
 

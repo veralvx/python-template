@@ -106,8 +106,8 @@ assert greeting("Ada") == "Hello, Ada!"
 Each member is its own distribution, with its own version, changelog and tag
 (`<package>-v<version>`): `just release <package> <level>`. A new member is a folder under
 `packages/` with its pyproject.toml, README.md and copies of the licence files (its sdist holds
-its folder only); the root's tests, ruff's, basedpyright's and coverage's settings name the
-members' folders and import names, so add it there too.
+its folder only); the root's tests and pytest's, ruff's, basedpyright's and coverage's settings
+name the members' folders and import names, so add it there too.
 
 {% endif -%}
 ## Development
