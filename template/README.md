@@ -16,7 +16,9 @@ git commit -m "chore: initial commit from template"
 ```
 
 With [Nix](https://nixos.org), `nix develop` enters a shell with uv, its Python and every tool
-below, at the versions `flake.lock` pins -- the same as the dev group's (`pyproject.toml`).
+below, at the versions `flake.lock` pins -- the same as the dev group's (`pyproject.toml`). A
+flake sees git's files only, so add them first: `git add . && nix develop --command uv lock`, then
+the commit.
 
 Then, in whichever order suits you:
 

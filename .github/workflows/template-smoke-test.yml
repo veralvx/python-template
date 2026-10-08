@@ -112,7 +112,9 @@ jobs:
       - name: A name that is no Python import name is refused
         run: |
           set -euo pipefail
-          # no identifier, a keyword, a standard-library module's (validate-name.rhai)
+          # no identifier, a keyword, a standard-library module's (validate-name.rhai); the
+          # destination must exist, or cargo-generate fails before the hook runs
+          mkdir -p "$RUNNER_TEMP/refused"
           for name in 3d-tool async calendar; do
             if cargo generate --path "$GITHUB_WORKSPACE" template --name "$name" \
               --destination "$RUNNER_TEMP/refused" --silent -d project_kind=bin \
@@ -122,7 +124,11 @@ jobs:
               echo "::error::$name was not refused" >&2
               exit 1
             fi
-            grep -q 'choose another name' "$RUNNER_TEMP/refused.log"
+            if ! grep -q 'choose another name' "$RUNNER_TEMP/refused.log"; then
+              echo "::error::$name failed, but not by the hook:" >&2
+              cat "$RUNNER_TEMP/refused.log" >&2
+              exit 1
+            fi
           done
 
   generate:
@@ -166,9 +172,11 @@ jobs:
           # in git's config, not GIT_AUTHOR_NAME and the like: `cog verify` reads it there
           git config user.name smoke
           git config user.email smoke@example.com
-          # the lock, written by the dev shell's uv: the first step README.md gives
-          nix develop --command uv lock
+          # the lock, written by the dev shell's uv, as README.md's first steps give it: the files
+          # added first, as a flake sees git's files only (an untracked flake.nix is an error)
           git add .
+          nix develop --command uv lock
+          git add uv.lock
           git commit --quiet -m "chore: initial commit from template"
 
       # installed for every step below, so the releases commit and push through them too
