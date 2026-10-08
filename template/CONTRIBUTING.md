@@ -75,6 +75,10 @@ just build    # every package's sdist and wheel, into dist/
 
 `just` alone lists every recipe.
 
+A new dependency: `uv add` it. The flake builds with nixpkgs' package of the same name; `just nix`
+names one it cannot map -- another name in nixpkgs, extras, a marker -- to give in
+`nix/packages.nix`'s `overrides`.
+
 ## Creating a Pull Request
 
 1. Make sure `just checks` passes.
