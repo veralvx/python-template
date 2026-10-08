@@ -40,25 +40,47 @@ let
 
   pythons = import ./pythons.nix { inherit pkgs; };
 
+  manifest = lib.importTOML ../pyproject.toml;
+  # the tools nixpkgs carries as applications, not as Python packages
+  applications = {
+    inherit (pkgs)
+      basedpyright
+      ruff
+      ty
+      pip-audit
+      git-cliff
+      uv
+      ;
+  };
+  # a dependency group's `name==version` pins, read
+  pin =
+    spec:
+    let
+      parts = lib.splitString "==" spec;
+    in
+    lib.throwIfNot (lib.length parts == 2) "pyproject.toml: ${spec} is no name==version" {
+      name = lib.head parts;
+      version = lib.last parts;
+    };
+  # the dev group's Python packages (pytest, its plugins...), the tests' environment
+  testTools = lib.filter (name: !applications ? ${name}) (
+    map (spec: (pin spec).name) manifest.dependency-groups.dev
+  );
+
   onPython =
     version:
     let
       python3Packages = pythons.packagesFor version;
       built = import ./packages.nix { inherit pkgs python3Packages; };
       suffix = "py${lib.replaceStrings [ "." ] [ "" ] version}";
-      # the packages, installed, with the dev group's test tools (the `pins` keep them the same).
-      # toPythonModule: buildPythonApplication's result is no Python module to withPackages, which
-      # would leave a command's package out silently (nixpkgs' python-packages-base.nix)
+      # the packages, installed, with the dev group's Python packages (the `pins` keep them the
+      # same). toPythonModule: buildPythonApplication's result is no Python module to
+      # withPackages, which would leave a command's package out silently (nixpkgs'
+      # python-packages-base.nix)
       environment = python3Packages.python.withPackages (
         ps:
         map python3Packages.toPythonModule (lib.attrValues built.packages)
-        ++ [
-          ps.packaging
-          ps.pytest
-          ps.pytest-cov
-          ps.pytest-timeout
-          ps.pytest-xdist
-        ]
+        ++ map (name: ps.${name}) testTools
       );
     in
     {
@@ -75,7 +97,7 @@ let
           ''
             export HOME=$TMPDIR
             cd ${source}
-            basedpyright --pythonpath ${environment}/bin/python
+            basedpyright --pythonpath ${environment}/bin/python --pythonversion ${version}
             touch $out
           '';
     };
@@ -84,27 +106,7 @@ let
   # version: each from python3Packages, but nixpkgs' applications
   pins =
     let
-      manifest = lib.importTOML ../pyproject.toml;
-      applications = {
-        inherit (pkgs)
-          basedpyright
-          ruff
-          ty
-          pip-audit
-          git-cliff
-          uv
-          ;
-      };
       nixpkgsVersion = name: (applications.${name} or pkgs.python3Packages.${name}).version;
-      pin =
-        spec:
-        let
-          parts = lib.splitString "==" spec;
-        in
-        lib.throwIfNot (lib.length parts == 2) "pyproject.toml: ${spec} is no name==version" {
-          name = lib.head parts;
-          version = lib.last parts;
-        };
       uv = {
         name = "uv";
         version = lib.removePrefix "==" manifest.tool.uv.required-version;

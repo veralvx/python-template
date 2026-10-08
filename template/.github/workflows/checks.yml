@@ -64,12 +64,13 @@ jobs:
           uv run --no-sync ruff format --check
 
       - name: Types (basedpyright)
-        run: uv run --no-sync basedpyright
+        # this Python's: pyproject's pythonVersion is the floor, which `just static` checks
+        run: uv run --no-sync basedpyright --pythonversion ${{ matrix.python-version }}
 
       - name: Types (ty, advisory)
         # never failing the build until ty is stable (its own README: pre-release)
         continue-on-error: true
-        run: uv run --no-sync ty check --output-format=github
+        run: uv run --no-sync ty check --python-version ${{ matrix.python-version }} --output-format=github
 
       - name: Dead code
         run: uv run --no-sync vulture
