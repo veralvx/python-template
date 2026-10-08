@@ -23,6 +23,11 @@ cargo_generate_version = ">=0.25.0"
 # measured), so a Liquid error shows only in tools/render-check.py, which renders strictly.
 exclude = [".github/workflows/**", ".githooks/**", "cliff.toml", "justfile", "nix/**"]
 
+# The project name, checked before anything is written: its import name must be a Python
+# identifier (validate-name.rhai). cargo-generate runs a hook from the template and does not copy it.
+[hooks]
+pre = ["validate-name.rhai"]
+
 [placeholders.description]
 type = "string"
 prompt = "One-line description (PyPI's summary)"

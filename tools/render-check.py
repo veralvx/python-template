@@ -164,7 +164,15 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one gate, read top to botto
     print("  checked the members' licence files")
 
     nix = shutil.which("nix-instantiate")
-    files = sorted(p for p in TEMPLATE.rglob("*") if p.is_file() and p.name != "cargo-generate.toml")
+    # the output's files: cargo-generate copies neither its config nor its hook scripts
+    hooks = {name for names in cfg.get("hooks", {}).values() for name in names}
+    for name in sorted(hooks):
+        if not (TEMPLATE / name).is_file():
+            fail(f"hook {name} does not exist")
+    skipped = {"cargo-generate.toml"} | hooks
+    files = sorted(
+        p for p in TEMPLATE.rglob("*") if p.is_file() and str(p.relative_to(TEMPLATE)) not in skipped
+    )
 
     # Every variable referenced in a templated file must be declared or built in: cargo-generate
     # renders an unknown one as an empty string, which no "leftover {{" check can see

@@ -62,7 +62,10 @@ it behind when validation rejects one. The retry then stops with
 | `keywords`        | *(empty)*           | `project.keywords` (comma-separated)                              |
 
 Every answer is validated at the prompt: the description, the author and the email cannot hold a
-`"` or `\` (they land in TOML strings), nor the description a `$` (it lands in a Nix string).
+`"` or `\` (they land in TOML strings), nor the description a `$` (it lands in a Nix string). The
+project name is checked before anything is written (`template/validate-name.rhai`, a pre hook):
+its import name must be an ASCII Python identifier and no keyword -- `3d-tool` or `async` is
+refused.
 
 ### What `project_kind` selects
 
@@ -177,7 +180,9 @@ left unexpanded and that the result parses as TOML, YAML, JSON and -- with `nix-
 `main` and on every pull request: render-check; every kind × licence × email answer through the
 real cargo-generate (manifests, licence files, dprint); and for each kind, in the generated
 flake's dev shell, the lock written, the hooks refusing what CI would, `just checks` with the
-flake's checks built, the changelog and the build, and real releases against a bare remote.
+flake's checks built, the changelog and the build; and for `bin` and `workspace` (`lib` releases
+as `bin` does), real releases against a bare remote, each tag then read as `release.yml` and
+`publish.yml` read it.
 
 ## Verification status
 
