@@ -237,6 +237,10 @@ Also confirmed by running it:
   --all-systems`, Nix 2.34.6, the shipped flake.lock's nixpkgs) and is nixfmt-clean; its `pins`
   check finds no stale pin, and finds a mutated one. The workspace's command package takes the
   core's derivation as its dependency; the dev shell's Python is the floor.
+- **The image prompt**: all 180 combinations with it (`bin` and `workspace` with the image or
+  without) pass dprint, nixfmt, actionlint and shellcheck and evaluate on all three systems;
+  the image, its check and its workflow exist exactly where chosen, on Linux alone, and five
+  of them, one per kind and choice, pass the full list above too.
 - **The name hook** refuses `3d-tool`, `async`, `calendar` and `Über-tool`, and is not copied.
 - **The types on every Python**: basedpyright and ty pass the starter code at 3.12, 3.13 and 3.14
   (`--pythonversion`, as CI and the flake run them); the flake's test environment holds the dev
