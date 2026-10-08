@@ -1,0 +1,110 @@
+# The command's release tag publishes its OCI image to GHCR, as ghcr.io/<owner>/<repository>:
+# the flake's `image` (nix/image.nix) built on each Linux architecture, run once, pushed per
+# architecture, then joined under one multi-architecture tag, <version> (and `latest` for a final
+# release). The job's token pushes: no secret stored. A first push is private (GHCR's default):
+# make the package public in its settings once.
+name: Image
+
+on:
+  push:
+    # release.yml's tags; a workspace's library tag builds nothing
+    tags: ["v[0-9]*", "*-v[0-9]*"]
+
+permissions: {}
+
+jobs:
+  tag:
+    name: The tag's package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      command: ${{ steps.read.outputs.command }}
+      version: ${{ steps.read.outputs.version }}
+      latest: ${{ steps.read.outputs.latest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Read the tag
+        id: read
+        run: |
+          read -r _ folder version < <(.github/package-tag.sh "$GITHUB_REF_NAME")
+          # the image is the command's: the package with [project.scripts]
+          command=false
+          if grep -q '^\[project\.scripts\]' "$folder/pyproject.toml"; then command=true; fi
+          # PEP 440: a pre-release (a, b, rc) or a development release is never `latest`
+          latest=true
+          if [[ $version =~ (a|b|rc|\.dev)[0-9]+ ]]; then latest=false; fi
+          {
+            echo "command=$command"
+            echo "version=$version"
+            echo "latest=$latest"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and push (${{ matrix.arch }})
+    needs: tag
+    if: needs.tag.outputs.command == 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      - name: Build, run and push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          # streamed into docker: no compressed copy of the closure in the store
+          "$(nix build --no-link --print-out-paths .#image.stream)" | docker load
+          loaded="$(nix eval --raw .#image.imageName):$(nix eval --raw .#image.imageTag)"
+          # the image as a user runs it: its entrypoint, as its user
+          expected="$(nix eval --raw .#default.meta.mainProgram) $VERSION"
+          actual="$(docker run --rm "$loaded" --version)"
+          if [[ $actual != "$expected" ]]; then
+            echo "::error::--version gave '$actual', expected '$expected'" >&2
+            exit 1
+          fi
+          docker tag "$loaded" "$repository:$VERSION-${{ matrix.arch }}"
+          docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<< "$GH_TOKEN"
+          docker push "$repository:$VERSION-${{ matrix.arch }}"
+
+  publish:
+    name: Multi-architecture tag
+    needs: [tag, build]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Join the architectures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.tag.outputs.version }}
+          LATEST: ${{ needs.tag.outputs.latest }}
+        run: |
+          set -euo pipefail
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          tags=(--tag "$repository:$VERSION")
+          if [[ $LATEST == true ]]; then tags+=(--tag "$repository:latest"); fi
+          docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<< "$GH_TOKEN"
+          docker buildx imagetools create "${tags[@]}" \
+            "$repository:$VERSION-amd64" "$repository:$VERSION-arm64"

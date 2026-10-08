@@ -7,13 +7,15 @@ name: Template smoke test
 #
 #   render-check   tools/render-check.py: every prompt combination renders and parses; the
 #                  copies agree; the manifests describe their layout
-#   combinations   every kind x licence x email answer through the real cargo-generate: each
-#                  manifest parses, each licence file is where its choice puts it, dprint passes;
+#   combinations   every kind x licence x email answer through the real cargo-generate (no email,
+#                  no image): each manifest parses, each licence file is where its choice puts
+#                  it, the image's files are there or not, dprint passes;
 #                  a project name that is no Python import name refused
 #   generate       for each kind, in the generated flake's dev shell (its pinned tools): the
 #                  lock written, the git hooks refusing what CI would, `just checks` -- the
-#                  flake's checks built last -- and, but for lib (bin's recipe), real releases
-#                  against a bare remote, each tag read as release.yml and publish.yml read it
+#                  flake's checks built last, the image among them -- the image run; and, but
+#                  for lib (bin's recipe), real releases against a bare remote, each tag read as
+#                  release.yml and publish.yml read it
 
 on:
   push:
@@ -81,12 +83,24 @@ jobs:
               for email in jane@example.com ""; do
                 case "$licence" in MIT) python=3.12 ;; Apache-2.0) python=3.14 ;; *) python=3.13 ;; esac
                 name="c-$kind-$(tr -cd 'a-z0-9' <<< "${licence,,}")${email:+-e}"
+                # the image: its default with the email, declined without (a lib is never asked)
+                image=()
+                if [ "$kind" != lib ] && [ -z "$email" ]; then image=(-d container_image=false); fi
                 cargo generate --path "$GITHUB_WORKSPACE" template --name "$name" \
-                  --destination "$out" --silent -d project_kind="$kind" \
+                  --destination "$out" --silent -d project_kind="$kind" "${image[@]}" \
                   -d "description=Does a thing." -d "author_name=Jane Doe" \
                   -d "author_email=$email" -d github_username=jane \
                   -d "license=$licence" -d python_min="$python" -d "keywords=cli, demo"
                 dir="$out/$name"
+                want=absent
+                if [ "$kind" != lib ] && [ -n "$email" ]; then want=present; fi
+                for file in nix/image.nix .github/workflows/image.yml; do
+                  have=$([ -f "$dir/$file" ] && echo present || echo absent)
+                  if [ "$have" != "$want" ]; then
+                    echo "::error::$dir/$file is $have, expected $want" >&2
+                    exit 1
+                  fi
+                done
                 # each package's manifest parses, and holds its licence files where its choice puts them
                 packages=("$dir")
                 if [ "$kind" = workspace ]; then packages=("$dir"/packages/*); fi
@@ -208,6 +222,18 @@ jobs:
       - name: just checks (the flake's checks last)
         working-directory: ${{ runner.temp }}/generated/demo
         run: nix develop --command just checks
+
+      # built by `just checks` (the flake's `image` check); here loaded and run as a user would
+      - name: The image runs
+        if: matrix.kind != 'lib'
+        working-directory: ${{ runner.temp }}/generated/demo
+        run: |
+          set -euo pipefail
+          "$(nix build --no-link --print-out-paths .#image.stream)" | docker load
+          test "$(docker run --rm demo:0.1.0 --version)" = "demo 0.1.0"
+          test "$(docker inspect --format '{{ .Config.User }}' demo:0.1.0)" = "65534:65534"
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' demo:0.1.0)" \
+            = "https://github.com/jane/demo"
 
       - name: The changelog, and the packages PyPI would get
         working-directory: ${{ runner.temp }}/generated/demo

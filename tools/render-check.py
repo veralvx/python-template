@@ -17,7 +17,7 @@ generation otherwise:
   * does each manifest describe its layout: the Pythons, the licence files, the kind?
 
 An approximation: cargo-generate uses the Rust `liquid` crate, this python-liquid. They agree on
-the subset used here (assign, if/elsif/else, unless, for, split, strip, remove, date), which is
+the subset used here (assign, if/elsif/else, unless, for, split, strip, remove, date, downcase), which is
 why the template stays inside it. One known divergence: after a `-%}` trim tag, python-liquid
 also drops a file's final newline where liquid-rust keeps it -- so whitespace is the smoke
 test's to check, not this.
@@ -71,13 +71,26 @@ BASE_VARS = {
 }
 PYTHONS = ("3.12", "3.13", "3.14")
 
+# A lib is never asked container_image (a conditional placeholder): undefined, as there -- or
+# given anyway on the command line (`-d`), which cargo-generate passes through unasked
+IMAGES = {"bin": (True, False), "lib": (None, True), "workspace": (True, False)}
 CASES = [
     {"project_kind": kind, "license": lic, "python_min": py, **extra}
+    | ({} if image is None else {"container_image": image})
     for kind in ("bin", "lib", "workspace")
+    for image in IMAGES[kind]
     for lic in ("MIT OR Apache-2.0", "MIT", "Apache-2.0")
     for py in PYTHONS
     for extra in ({}, {"author_email": "", "keywords": ""})
 ]
+
+
+def holds(expr: str, vars_: dict[str, object]) -> bool:
+    """A conditional's Rhai expression -- comparisons, `&&`, `||`, `!` -- over the answers."""
+    python = expr.replace("&&", " and ").replace("||", " or ")
+    python = re.sub(r"!(?!=)", " not ", python)
+    names = {k.replace("-", "_"): v for k, v in vars_.items()}
+    return bool(eval(python, {"__builtins__": {}}, names))  # noqa: S307 - our own config's
 
 # `{{project-name}}` is valid for the Rust liquid crate but the dash parses as subtraction in
 # python-liquid, so rewrite the identifier inside tags only -- never in prose that mentions it.
@@ -97,8 +110,11 @@ def matches_any(rel: str, globs: list[str]) -> bool:
 def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one gate, read top to bottom
     cfg = tomllib.loads(CONFIG.read_text())
     excluded = cfg["template"].get("exclude", [])
-    placeholders = cfg["placeholders"]
     conditionals = cfg.get("conditional", {})
+    # the prompts, those asked under a condition among them
+    placeholders = cfg["placeholders"] | {
+        name: spec for section in conditionals.values() for name, spec in section.get("placeholders", {}).items()
+    }
     env = Environment()
     failures: list[str] = []
 
@@ -184,7 +200,7 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one gate, read top to botto
     reserved = {
         "if", "elsif", "else", "endif", "unless", "endunless", "for", "endfor", "in", "assign",
         "and", "or", "contains", "true", "false", "nil", "empty", "forloop", "last", "first",
-        "now", "strip", "split", "replace", "remove", "date", "raw", "endraw",
+        "now", "strip", "split", "replace", "remove", "date", "raw", "endraw", "downcase",
     }  # fmt: skip
     refs = 0
     for path in files:
@@ -215,18 +231,20 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one gate, read top to botto
     for case in CASES:
         vars_ = {**BASE_VARS, **case}
         vars_["project_name"] = vars_["project-name"]
+        image = case.get("container_image") is True and case["project_kind"] != "lib"
         label = f"{case['project_kind']}/{case['license']}/{case['python_min']}" + (
             "/bare" if case.get("author_email") == "" else ""
-        )
+        ) + {None: "", True: "/image", False: "/no-image"}[case.get("container_image")]
         ignored: list[str] = []
         for expr, section in conditionals.items():
-            m = re.fullmatch(r"(\w+)\s*==\s*\"([^\"]+)\"", expr)
-            if not m:
-                fail(f"harness cannot evaluate conditional {expr!r}")
-            elif str(vars_.get(m.group(1))) == m.group(2):
-                ignored.extend(section.get("ignore", []))
+            try:
+                if holds(expr, vars_):
+                    ignored.extend(section.get("ignore", []))
+            except Exception as exc:  # noqa: BLE001 - report and continue
+                fail(f"harness cannot evaluate conditional {expr!r}: {exc}")
 
         rendered = 0
+        outputs: dict[str, str] = {}
         for path in files:
             rel = str(path.relative_to(TEMPLATE))
             # NOT skipping `ignored` files, though cargo-generate removes them before rendering:
@@ -243,6 +261,7 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one gate, read top to botto
                 if leftovers := TAG.findall(out):
                     fail(f"{label}: {rel}: unexpanded template syntax: {leftovers[:3]}")
                 rendered += 1
+            outputs[rel] = out
             try:
                 if path.suffix == ".toml":
                     tomllib.loads(out)
@@ -311,6 +330,12 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one gate, read top to botto
             fail(f"{label}: packages/ kept for {kind}")
         if any(f.startswith("src/") for f in rendered_files) == (kind == "workspace"):
             fail(f"{label}: src/ dropped for {kind}")
+        # the image: its Nix file, its workflow and the flake's output, all or none
+        for name in ("nix/image.nix", ".github/workflows/image.yml"):
+            if (name in rendered_files) != image:
+                fail(f"{label}: {name} {'missing' if image else 'kept'}")
+        if ("nix/image.nix" in outputs["flake.nix"]) != image:
+            fail(f"{label}: flake.nix's image output does not match container_image")
         print(f"== render {label}: {rendered} files, manifests checked")
 
     print()

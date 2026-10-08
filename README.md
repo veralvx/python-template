@@ -60,12 +60,15 @@ it behind when validation rejects one. The retry then stops with
 | `license`         | `MIT OR Apache-2.0` | `project.license`, which `LICENSE-*` files are kept, README       |
 | `python_min`      | `3.13`              | `requires-python`, `.python-versions`, classifiers, ruff, pyright |
 | `keywords`        | *(empty)*           | `project.keywords` (comma-separated)                              |
+| `container_image` | `true` (not `lib`)  | the flake's `image` and `image.yml` -- see below                  |
 
 Every answer is validated at the prompt: the description, the author and the email cannot hold a
 `"` or `\` (they land in TOML strings), nor the description a `$` (it lands in a Nix string). The
 project name is checked before anything is written (`template/validate-name.rhai`, a pre hook):
 its import name must be an ASCII Python identifier, no keyword and no standard-library
 module's: `3d-tool`, `async` or `calendar` is refused.
+
+`container_image` is asked for `bin` and `workspace` alone: a library has no command to run.
 
 ### What `project_kind` selects
 
@@ -88,6 +91,16 @@ whose licence texts differ from the root's -- an sdist holds the member's folder
 the types on each, against nixpkgs' interpreters. A new Python is a line there, a classifier,
 and (here) a choice and a line in `template/.python-versions`.
 
+### The OCI image
+
+With `container_image`, the flake has an `image` on Linux: `dockerTools.buildLayeredImage` of the
+command's package -- its closure alone, no base image and no shell, run as `nobody`, labelled
+for GHCR. `nix build .#image` gives the gzipped docker-archive and the flake's checks build it;
+`.#image.stream` streams it uncompressed, sparing the store a second copy of the closure.
+`image.yml`, on the command's release tag, streams it into Docker on amd64 and arm64, runs it,
+pushes each, and joins them as `ghcr.io/<owner>/<repository>:<version>` (`latest` too for a final
+release), with the job's token.
+
 ## What you get
 
 ```
@@ -95,7 +108,8 @@ pyproject.toml        the project (or the workspace), the pinned dev group, ever
 .python-versions      the supported Pythons, one a line: CI's matrix, the flake's checks
 uv.lock               written by the first `uv lock`, committed; `--locked` everywhere after
 justfile              `just checks` = what CI runs, the flake's checks last; `just release`
-flake.nix, nix/       the dev shell, the packages, the checks; flake.lock pins nixpkgs 26.05
+flake.nix, nix/       the dev shell, the packages, the checks, the image (if chosen);
+                      flake.lock pins nixpkgs 26.05
 .githooks/            opt-in (`just install-hooks`): the lock, ruff, dprint before a commit;
                       Conventional Commits for the message and the push
 cliff.toml, cog.toml  git-cliff changelogs, cocogitto's commit checks
@@ -105,7 +119,8 @@ src/, tests/          starter code: typed, documented, every line and branch tes
 AGENTS.md             the lint and type policy, and what to do when a rule fires
 README, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT
 LICENSE-MIT / LICENSE-APACHE (a workspace member carries its own copies)
-.github/              9 workflows, dependabot, issue and PR templates, the tag script
+.github/              9 workflows (10 with the image), dependabot, issue and PR templates,
+                      the tag and release-notes scripts
 ```
 
 ### The tools, pinned to nixpkgs
@@ -131,6 +146,8 @@ rust-template: the pins are only right for the nixpkgs they were taken from.
   every commit, and a pull request's title (a squash merge makes it the commit).
 - `release.yml`, `publish.yml` -- a release tag makes the GitHub release (the changelog's section
   as notes) and publishes to PyPI by Trusted Publishing, no token stored.
+- `image.yml` (with the image) -- the command's release tag pushes its OCI image to GHCR, for
+  amd64 and arm64, after running it.
 - `dependabot-automerge.yml` -- merges Dependabot's patch and minor action bumps once the
   required checks pass. Read its setup comment: without required checks it merges what CI never
   gated.
@@ -158,8 +175,9 @@ python3 -m venv .venv    # Python 3.11+ (tomllib)
 .venv/bin/python tools/render-check.py
 ```
 
-`tools/render-check.py` renders every templated file for all 54 combinations of `project_kind`
-× `license` × `python_min` × empty-or-present email and keywords, then checks that nothing is
+`tools/render-check.py` renders every templated file for all 90 combinations of `project_kind`
+(with the image or without; a lib with it unasked, or given anyway) × `license` × `python_min` ×
+empty-or-present email and keywords, then checks that nothing is
 left unexpanded and that the result parses as TOML, YAML, JSON and -- with `nix-instantiate` on
 `PATH` -- Nix. It also guards what fails silently otherwise:
 
@@ -175,7 +193,8 @@ left unexpanded and that the result parses as TOML, YAML, JSON and -- with `nix-
   package's code, manifest table and licence texts; the check holds them equal, but for what
   tells them apart.
 - **The manifests describe their layout**: `.python-versions`, `requires-python`, the
-  classifiers, ruff's and basedpyright's targets, the licence files, the kind.
+  classifiers, ruff's and basedpyright's targets, the licence files, the kind; and the image's
+  Nix file, workflow and flake output, all present or all absent.
 
 `.github/workflows/template-smoke-test.yml` does the real end-to-end check, weekly, on pushes to
 `main` and on every pull request: render-check; every kind × licence × email answer through the
@@ -231,9 +250,11 @@ Also confirmed by running it:
 What this does **not** cover -- the smoke-test workflow is what does:
 
 - **Builds under Nix.** The flake's derivations were evaluated, never built: this environment
-  reaches no binary cache. So the flake's tests, types and lint, and the command check, have not
-  run.
-- **GitHub Actions itself**, PyPI's Trusted Publishing and the GitHub release: linted, not run.
+  reaches no binary cache. So the flake's tests, types and lint, the command check and the
+  image have not run; the smoke test builds the image, runs it in Docker and reads its user and
+  labels.
+- **GitHub Actions itself**, PyPI's Trusted Publishing, the GitHub release and the GHCR push:
+  linted, not run.
 
 ## Attribution
 

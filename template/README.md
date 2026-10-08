@@ -32,6 +32,10 @@ Then, in whichever order suits you:
   package: this repository, the workflow `publish.yml`, the environment `pypi`. A release tag
   then publishes without a stored token. {% if project_kind == "workspace" %}The packages are
   `{{project-name}}` and `{{project-name}}-core`.{% else %}The package is `{{project-name}}`.{% endif %}
+{%- if project_kind != "lib" and container_image %}
+- After the first release, make the image public: GHCR publishes a new package as private (its
+  page, Package settings → Change visibility).
+{%- endif %}
 - Run `just checks` once to confirm your tools are complete: a step that stops on a missing
   command names it ([CONTRIBUTING.md](CONTRIBUTING.md) lists them; `nix develop` has them all).
 - `just install-hooks`, if you want the lock, ruff, dprint and commit-message checks run by git
@@ -64,6 +68,14 @@ uv tool install {{project-name}}
 ```
 {% endif %}
 With Nix, `nix {% if project_kind == "lib" %}build{% else %}run{% endif %} github:{{github_username}}/{{project-name}}`.
+{%- if project_kind != "lib" and container_image %}
+
+As an OCI image, for Linux on amd64 and arm64:
+
+```sh
+docker run --rm ghcr.io/{{ github_username | downcase }}/{{project-name}} --version
+```
+{%- endif %}
 
 ## Usage
 {% if project_kind == "lib" %}

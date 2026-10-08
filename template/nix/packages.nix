@@ -115,6 +115,12 @@ let
       dependencies = lib.concatMap dependency (project.dependencies or [ ]);
       doCheck = false; # the tests run once, over every package: nix/checks.nix
       pythonImportsCheck = [ (lib.replaceStrings [ "-" ] [ "_" ] project.name) ];
+      # nix/image.nix's labels: the SPDX expression as written (meta.license holds its
+      # identifiers alone), and the repository (a member's homepage is its folder)
+      passthru = {
+        spdxLicense = project.license;
+        repository = project.urls.Repository;
+      };
       meta = {
         inherit (project) description;
         homepage = project.urls.Homepage;
