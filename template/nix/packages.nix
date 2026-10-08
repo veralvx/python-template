@@ -2,7 +2,9 @@
 # installer), each from its own pyproject.toml: name, version, description, licence, homepage,
 # the Python it needs, its dependencies, its command. Nothing here is project-specific: a single
 # package is the root's [project]; a workspace's members are [tool.uv.workspace]'s `members`
-# (each a folder, or a `folder/*` glob of them).
+# (each a folder, or a `folder/*` glob of them). Each is a Python module, so a Python
+# environment takes it; the command is its package as an application (toPythonApplication: the
+# same derivation).
 #
 # A dependency that is a member is that member's package; any other is nixpkgs' Python package
 # of its normalised name (python3Packages.<name>). One nixpkgs names otherwise, or one with
@@ -53,6 +55,16 @@ let
   overrides = { };
   # extras, a marker, a URL: what a name alone cannot honour
   plain = requirement: builtins.match ".*[][;@].*" requirement == null;
+  # hatchling's license-files when [project] gives none (its metadata/core.py)
+  hatchlingLicenceFiles = [
+    "LICEN[CS]E*"
+    "COPYING*"
+    "NOTICE*"
+    "AUTHORS*"
+  ];
+  # a file-name glob as a regex: `*`, `?`, `[...]` and `[!...]`, the rest literal
+  globRegex =
+    glob: lib.replaceStrings [ "\\*" "\\?" "\\[!" "\\[" ] [ ".*" "." "[^" "[" ] (lib.escapeRegex glob);
 
   manifests = map (folder: {
     inherit folder;
@@ -74,6 +86,18 @@ let
         lib.filter lib.isString (builtins.split "[ ()]+" project.license)
       );
       scripts = project.scripts or { };
+      # what hatchling reads besides the code: the readme, and the files license-files' globs
+      # match at the package's top level (Python's glob, as hatchling) -- a file missing from the
+      # source is left out of the wheel without a word
+      readme =
+        if lib.isString (project.readme or null) then project.readme else project.readme.file or null;
+      topFiles = lib.attrNames (lib.filterAttrs (_: type: type == "regular") (builtins.readDir folder));
+      matching =
+        glob:
+        lib.throwIf (lib.hasInfix "/" glob)
+          "${project.name}: license-files' ${glob} is below the package's top level, which alone is read here"
+          (lib.filter (name: builtins.match (globRegex glob) name != null) topFiles);
+      licenceFiles = lib.concatMap matching (project.license-files or hatchlingLicenceFiles);
       dependency =
         requirement:
         let
@@ -90,24 +114,19 @@ let
             python3Packages.${name}
               or (throw "${project.name}: nixpkgs has no python3Packages.${name} for ${requirement}: give its packages in nix/packages.nix's overrides")
           ];
-      builder =
-        if scripts == { } then
-          python3Packages.buildPythonPackage
-        else
-          python3Packages.buildPythonApplication;
     in
-    builder {
+    python3Packages.buildPythonPackage {
       pname = project.name;
       inherit (project) version;
-      # what its wheel takes, and what hatchling reads to build it
       src = lib.fileset.toSource {
         root = folder;
-        fileset = lib.fileset.unions [
-          (folder + "/pyproject.toml")
-          (folder + "/README.md")
-          (folder + "/src")
-          (lib.fileset.fileFilter (file: lib.hasPrefix "LICENSE-" file.name) folder)
-        ];
+        fileset = lib.fileset.unions (
+          [
+            (folder + "/pyproject.toml")
+            (folder + "/src")
+          ]
+          ++ map (name: folder + "/${name}") (lib.optional (readme != null) readme ++ licenceFiles)
+        );
       };
       disabled = python3Packages.pythonOlder oldest;
       pyproject = true;
@@ -145,7 +164,7 @@ in
   inherit packages;
   default =
     if commands != [ ] then
-      lib.head commands
+      python3Packages.toPythonApplication (lib.head commands)
     else
       packages.${
         normalise (if rootManifest ? project then rootManifest.project.name else lib.head memberNames)

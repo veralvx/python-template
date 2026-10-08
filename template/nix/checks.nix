@@ -74,13 +74,9 @@ let
       built = import ./packages.nix { inherit pkgs python3Packages; };
       suffix = "py${lib.replaceStrings [ "." ] [ "" ] version}";
       # the packages, installed, with the dev group's Python packages (the `pins` keep them the
-      # same). toPythonModule: buildPythonApplication's result is no Python module to
-      # withPackages, which would leave a command's package out silently (nixpkgs'
-      # python-packages-base.nix)
+      # same)
       environment = python3Packages.python.withPackages (
-        ps:
-        map python3Packages.toPythonModule (lib.attrValues built.packages)
-        ++ map (name: ps.${name}) testTools
+        ps: lib.attrValues built.packages ++ map (name: ps.${name}) testTools
       );
     in
     {
