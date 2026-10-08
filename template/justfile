@@ -93,7 +93,7 @@ install-hooks:
 
 # git-cliff, offline, with the repository the compare links need read from pyproject.toml's
 # Repository (cliff.toml is project-agnostic). In a workspace the package comes first: its
-# folder's commits, its tags -- the name, `-v`, then a version's digits and dot, so `foo-v2-v1.0.0`
+# folder's commits, its tags -- the name, `-v`, then a version's first number, so `foo-v2-v1.0.0`
 # (a member foo-v2's) is no tag of foo's.
 [doc("The changelog (cliff.toml): `just changelog [package] --unreleased` previews the next release")]
 [positional-arguments]
@@ -102,13 +102,13 @@ changelog *args:
     set -euo pipefail
     if grep -q '^\[project\]' pyproject.toml; then
         manifest=pyproject.toml
-        scope=(--tag-pattern '^v[0-9]+\.')
+        scope=(--tag-pattern '^v[0-9]+(\.|$)')
     else
         package="${1:?in a workspace, the package comes first: just changelog <package> ...}"
         shift
         manifest="packages/$package/pyproject.toml"
         [ -f "$manifest" ] || { echo "error: no workspace member $package (packages/$package)" >&2; exit 1; }
-        scope=(--include-path "packages/$package/**" --tag-pattern "^${package//./\\.}-v[0-9]+\\.")
+        scope=(--include-path "packages/$package/**" --tag-pattern "^${package//./\\.}-v[0-9]+(\\.|$)")
     fi
     url="$(sed -n 's/^Repository[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest")"
     case "$url" in
@@ -164,7 +164,7 @@ release *args:
     # 2. The version: the declared one at the first release (no tag yet), else uv's bump
     declared="$("${version_of[@]}")"
     # the package's tags, as `just changelog` matches them: the prefix, then a version
-    released="$(git tag --list "${prefix}[0-9]*" | grep -E "^${prefix//./\\.}[0-9]+\\." || true)"
+    released="$(git tag --list "${prefix}[0-9]*" | grep -E "^${prefix//./\\.}[0-9]+(\\.|$)" || true)"
     if [ -z "$released" ]; then
         version="$declared"; bump=false
     else

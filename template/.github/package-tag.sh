@@ -2,7 +2,7 @@
 # A release tag read as the package it releases, its changelog's folder and its version:
 # `v0.2.0` is a single package's (the root's), `name-v0.2.0` a workspace member's (packages/name).
 # Refused unless the tag's version is the one the package's pyproject.toml declares. The version
-# is what follows the prefix -- a PEP 440 version holds no `-`, but may hold a `v` (0.1.0.dev1).
+# is what follows the prefix: it may hold a `v` (0.1.0.dev1), never `-v`.
 # release.yml's and publish.yml's.
 set -euo pipefail
 
