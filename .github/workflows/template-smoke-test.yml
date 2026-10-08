@@ -1,0 +1,269 @@
+name: Template smoke test
+
+# The template proven the only way that counts: generated with the real cargo-generate, for
+# every project_kind, and the result put through what its own CI and `just checks` run. Weekly
+# as well, because a template rots without a commit: a new release on PyPI the lock takes, a
+# moved runner image.
+#
+#   render-check   tools/render-check.py: every prompt combination renders and parses; the
+#                  copies agree; the manifests describe their layout
+#   combinations   every kind x licence x email answer through the real cargo-generate: each
+#                  manifest parses, each licence file is where its choice puts it, dprint passes;
+#                  a project name that is no Python import name refused
+#   generate       for each kind, in the generated flake's dev shell (its pinned tools): the
+#                  lock written, the git hooks refusing what CI would, `just checks` -- the
+#                  flake's checks built last -- and, but for lib (bin's recipe), real releases
+#                  against a bare remote, each tag read as release.yml and publish.yml read it
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  render-check:
+    name: render-check.py
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Render every combination
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet python-liquid==2.3.4 pyyaml==6.0.3
+          "$RUNNER_TEMP/venv/bin/python" tools/render-check.py
+
+  combinations:
+    name: Every answer combination
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo (and cargo-generate)
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: smoke-combinations
+          cache-targets: "false"
+
+      # nixpkgs 26.05's cargo-generate is 0.23.9, below the template's floor (0.25.0)
+      - name: Install cargo-generate and dprint
+        run: |
+          cargo install --locked cargo-generate@0.25.0
+          npm install --global dprint@0.61.0
+
+      - name: Generate and check each
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/combinations"
+          mkdir -p "$out"
+          for kind in bin lib workspace; do
+            for licence in "MIT OR Apache-2.0" MIT Apache-2.0; do
+              for email in jane@example.com ""; do
+                case "$licence" in MIT) python=3.12 ;; Apache-2.0) python=3.14 ;; *) python=3.13 ;; esac
+                name="c-$kind-$(tr -cd 'a-z0-9' <<< "${licence,,}")${email:+-e}"
+                cargo generate --path "$GITHUB_WORKSPACE" template --name "$name" \
+                  --destination "$out" --silent -d project_kind="$kind" \
+                  -d "description=Does a thing." -d "author_name=Jane Doe" \
+                  -d "author_email=$email" -d github_username=jane \
+                  -d "license=$licence" -d python_min="$python" -d "keywords=cli, demo"
+                dir="$out/$name"
+                # each package's manifest parses, and holds its licence files where its choice puts them
+                packages=("$dir")
+                if [ "$kind" = workspace ]; then packages=("$dir"/packages/*); fi
+                for package in "${packages[@]}"; do
+                  python3 -c 'import sys, tomllib; tomllib.load(open(sys.argv[1], "rb"))' "$package/pyproject.toml"
+                  for file in MIT APACHE; do
+                    case "$licence/$file" in
+                      MIT/APACHE | Apache-2.0/MIT) want=absent ;;
+                      *) want=present ;;
+                    esac
+                    have=$([ -f "$package/LICENSE-$file" ] && echo present || echo absent)
+                    if [ "$have" != "$want" ]; then
+                      echo "::error::$package/LICENSE-$file is $have, expected $want" >&2
+                      exit 1
+                    fi
+                  done
+                done
+                (cd "$dir" && dprint check)
+              done
+            done
+          done
+
+      - name: A name that is no Python import name is refused
+        run: |
+          set -euo pipefail
+          # no identifier, a keyword, a standard-library module's (validate-name.rhai)
+          for name in 3d-tool async calendar; do
+            if cargo generate --path "$GITHUB_WORKSPACE" template --name "$name" \
+              --destination "$RUNNER_TEMP/refused" --silent -d project_kind=bin \
+              -d "description=Does a thing." -d "author_name=Jane Doe" -d author_email= \
+              -d github_username=jane -d license=MIT -d python_min=3.13 -d keywords= \
+              > "$RUNNER_TEMP/refused.log" 2>&1; then
+              echo "::error::$name was not refused" >&2
+              exit 1
+            fi
+            grep -q 'choose another name' "$RUNNER_TEMP/refused.log"
+          done
+
+  generate:
+    name: Generate (${{ matrix.kind }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [bin, lib, workspace]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo (and cargo-generate)
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: smoke-generate
+          cache-targets: "false"
+
+      - name: Install cargo-generate
+        run: cargo install --locked cargo-generate@0.25.0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      - name: Generate
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/generated"
+          cargo generate --path "$GITHUB_WORKSPACE" template --name demo \
+            --destination "$RUNNER_TEMP/generated" -d project_kind=${{ matrix.kind }} \
+            --silent -d "description=Does a thing." -d "author_name=Jane Doe" \
+            -d author_email=jane@example.com -d github_username=jane \
+            -d "license=MIT OR Apache-2.0" -d python_min=3.13 -d "keywords=cli, demo"
+          cd "$RUNNER_TEMP/generated/demo"
+          # in git's config, not GIT_AUTHOR_NAME and the like: `cog verify` reads it there
+          git config user.name smoke
+          git config user.email smoke@example.com
+          # the lock, written by the dev shell's uv: the first step README.md gives
+          nix develop --command uv lock
+          git add .
+          git commit --quiet -m "chore: initial commit from template"
+
+      # installed for every step below, so the releases commit and push through them too
+      - name: The git hooks refuse what CI would
+        working-directory: ${{ runner.temp }}/generated/demo
+        run: |
+          set -euo pipefail
+          refused() {
+            if "$@"; then echo "::error::not refused: $*" >&2; exit 1; fi
+          }
+          nix develop --command just install-hooks
+          # pre-commit: a source file ruff would reformat
+          file="$(git ls-files '*.py' | head -n 1)"
+          printf '\nUNFORMATTED  =  0\n' >> "$file"
+          refused nix develop --command git commit --quiet -am "style: unformatted"
+          git checkout -- "$file"
+          # commit-msg: a message that is no Conventional Commit
+          refused nix develop --command git commit --quiet --allow-empty -m "not conventional"
+          # pre-push: a revert, which git commits without running commit-msg
+          git init --quiet --bare "$RUNNER_TEMP/hooks.git"
+          echo probe > probe.txt
+          git add probe.txt
+          nix develop --command git commit --quiet -m "docs: a probe"
+          git revert --no-edit HEAD
+          refused nix develop --command git push --quiet "$RUNNER_TEMP/hooks.git" HEAD:main
+          git reset --quiet --hard HEAD~2
+          nix develop --command git push --quiet "$RUNNER_TEMP/hooks.git" HEAD:main
+
+      - name: just checks (the flake's checks last)
+        working-directory: ${{ runner.temp }}/generated/demo
+        run: nix develop --command just checks
+
+      - name: The changelog, and the packages PyPI would get
+        working-directory: ${{ runner.temp }}/generated/demo
+        run: |
+          set -euo pipefail
+          if [ ${{ matrix.kind }} = workspace ]; then
+            nix develop --command just changelog demo-core --unreleased
+          else
+            nix develop --command just changelog --unreleased
+          fi
+          nix develop --command just build
+          ls dist
+
+      # the recipe that writes, commits, tags and pushes, against a bare remote: every step as
+      # a maintainer runs it, `just checks` included
+      - name: Releases
+        if: matrix.kind != 'lib'
+        working-directory: ${{ runner.temp }}/generated/demo
+        run: |
+          set -euo pipefail
+          run() { nix develop --command "$@"; }
+          git init --quiet --bare "$RUNNER_TEMP/origin.git"
+          git remote add origin "$RUNNER_TEMP/origin.git"
+          run git push --quiet origin main
+          if [ ${{ matrix.kind }} = workspace ]; then
+            echo "change" >> packages/demo-core/README.md
+            run git commit --quiet -am "feat(core): a library feature"
+            run git push --quiet origin main
+            run just release demo-core minor
+            echo "change" >> packages/demo/README.md
+            run git commit --quiet -am "fix(cli): a command-line fix"
+            run git push --quiet origin main
+            run just release demo patch
+            echo "change" >> packages/demo-core/README.md
+            run git commit --quiet -am "feat(core)!: a breaking change"
+            run git push --quiet origin main
+            run just release demo-core minor
+            test "$(git -C "$RUNNER_TEMP/origin.git" tag | tr '\n' ' ')" = "demo-core-v0.1.0 demo-core-v0.2.0 demo-v0.1.0 "
+            grep -q '^version = "0.2.0"' packages/demo-core/pyproject.toml
+            grep -q '^## \[0.2.0\](https://github.com/jane/demo/compare/demo-core-v0.1.0..demo-core-v0.2.0)' packages/demo-core/CHANGELOG.md
+            if run just release demo patch; then
+              echo "::error::a release with nothing new was not refused" >&2
+              exit 1
+            fi
+          else
+            run git commit --quiet --allow-empty -m "feat: greet louder"
+            run git push --quiet origin main
+            run just release minor
+            run git commit --quiet --allow-empty -m "fix!: refuse zero"
+            run git push --quiet origin main
+            run just release minor
+            test "$(git -C "$RUNNER_TEMP/origin.git" tag | tr '\n' ' ')" = "v0.1.0 v0.2.0 "
+            grep -q '^version = "0.2.0"' pyproject.toml
+            grep -q '^## \[0.2.0\](https://github.com/jane/demo/compare/v0.1.0..v0.2.0)' CHANGELOG.md
+            if run just release patch; then
+              echo "::error::a release with nothing new was not refused" >&2
+              exit 1
+            fi
+          fi
+          # each tag as release.yml and publish.yml read it, at its own commit
+          for tag in $(git tag); do
+            git checkout --quiet "$tag"
+            read -r package folder version < <(run .github/package-tag.sh "$tag")
+            test "$package-v$version" = "$tag" || test "v$version" = "$tag"
+            run .github/release-notes.sh "$folder/CHANGELOG.md" "$version" > /dev/null
+          done
+          git checkout --quiet main

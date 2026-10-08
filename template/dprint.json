@@ -1,0 +1,24 @@
+// Markdown and TOML (`just dprint-check`, style-check-dprint.yml). The plugins at their latest
+// (`just dprint-update`).
+{
+  "markdown": {
+    "textWrap": "maintain",
+    // the plugin's defaults are underscores
+    "emphasisKind": "asterisks",
+    "strongKind": "asterisks"
+  },
+  // uv's own: `uv add` and `uv version` write four spaces
+  "toml": { "indentWidth": 4 },
+  "excludes": [
+    // git-cliff's (cliff.toml): regenerated at each release, never edited
+    "CHANGELOG.md",
+    "packages/*/CHANGELOG.md",
+    "uv.lock",
+    ".venv/",
+    "dist/"
+  ],
+  "plugins": [
+    "https://plugins.dprint.dev/markdown-0.26.0.wasm",
+    "https://plugins.dprint.dev/toml-0.9.0.wasm"
+  ]
+}

@@ -1,0 +1,79 @@
+# The dev group's checks (ruff, basedpyright, ty advisory, vulture, pytest with its coverage
+# gate) on every Python .python-versions lists, through uv: the versions read from the file at
+# run time, so it stays the one place they are named. nix.yml runs the same against the built
+# packages, on Linux and macOS.
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  # every pull request, whatever it touches: a path-filtered workflow never reports, and a
+  # required check that never reports blocks the merge
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  versions:
+    name: Python versions
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.read.outputs.list }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read .python-versions
+        id: read
+        # one version a line, as a JSON list (jq is on the runner image)
+        run: echo "list=$(jq -Rcn '[inputs | select(length > 0)]' .python-versions)" >> "$GITHUB_OUTPUT"
+
+  checks:
+    name: Checks (Python ${{ matrix.python-version }})
+    needs: versions
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(needs.versions.outputs.list) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        # pyproject.toml's required-version
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Lock and environment
+        run: |
+          uv lock --check
+          uv sync --locked
+          uv run --no-sync python --version
+
+      - name: Ruff
+        run: |
+          uv run --no-sync ruff check --output-format=github
+          uv run --no-sync ruff format --check
+
+      - name: Types (basedpyright)
+        # this Python's: pyproject's pythonVersion is the floor, which `just static` checks
+        run: uv run --no-sync basedpyright --pythonversion ${{ matrix.python-version }}
+
+      - name: Types (ty, advisory)
+        # never failing the build until ty is stable (its own README: pre-release)
+        continue-on-error: true
+        run: uv run --no-sync ty check --python-version ${{ matrix.python-version }} --output-format=github
+
+      - name: Dead code
+        run: uv run --no-sync vulture
+
+      - name: Pytest
+        run: uv run --no-sync pytest --cov -n auto

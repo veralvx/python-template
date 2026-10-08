@@ -1,0 +1,198 @@
+{% if project_kind == "workspace" -%}
+# The workspace's root: no project of its own (uv's virtual root). Its members are packages/*,
+# each its own pyproject.toml, released on its own. Here: the workspace, the tool groups, and the
+# tools' configuration for every member.
+{%- else -%}
+[build-system]
+# hatchling 1.26.2: license-files in PEP 639's final form, and metadata older readers take
+# (hatchling's changelog); the flake builds with nixpkgs' own
+requires = ["hatchling>=1.26.2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "{{project-name}}"
+version = "0.1.0"
+description = "{{description}}"
+readme = "README.md"
+license = "{{license}}"
+{% if license == "MIT OR Apache-2.0" -%}
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
+{%- elsif license == "MIT" -%}
+license-files = ["LICENSE-MIT"]
+{%- else -%}
+license-files = ["LICENSE-APACHE"]
+{%- endif %}
+requires-python = ">={{python_min}}"
+# multi-line, as every array here: dprint wraps a long one-line array, so its length would decide
+authors = [
+    { name = "{{author_name}}"{% if author_email != "" %}, email = "{{author_email}}"{% endif %} },
+]
+{% if keywords != "" -%}
+keywords = [
+{%- assign kw_list = keywords | split: "," %}
+{%- for k in kw_list %}
+    "{{ k | strip }}",
+{%- endfor %}
+]
+{% endif -%}
+# https://pypi.org/classifiers/ -- no License :: one: PEP 639's `license` replaces them
+classifiers = [
+    "Development Status :: 3 - Alpha",
+{%- if project_kind == "bin" %}
+    "Environment :: Console",
+{%- endif %}
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+{%- if python_min == "3.12" %}
+    "Programming Language :: Python :: 3.12",
+{%- endif %}
+{%- if python_min != "3.14" %}
+    "Programming Language :: Python :: 3.13",
+{%- endif %}
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+dependencies = []
+{%- if project_kind == "bin" %}
+
+[project.scripts]
+{{project-name}} = "{{crate_name}}.cli:main"
+{%- endif %}
+
+[project.urls]
+Changelog = "https://github.com/{{github_username}}/{{project-name}}/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/{{github_username}}/{{project-name}}"
+Issues = "https://github.com/{{github_username}}/{{project-name}}/issues"
+Repository = "https://github.com/{{github_username}}/{{project-name}}"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/{{crate_name}}"]
+{%- endif %}
+
+[dependency-groups]
+# Exact pins, each the version the flake's nixpkgs carries: `uv run` and `nix flake check` judge
+# the code with the same tools (nix/checks.nix's `pins` holds them; a nixpkgs update that leaves
+# one behind fails there). With floors, the lock takes newer releases, and a new ruff rule or a
+# new stub disagrees with Nix's verdict on the same code.
+dev = [
+    "basedpyright==1.39.3",
+    "coverage==7.14.1", # pytest-cov's, else floating: the coverage gate is its verdict
+{%- if project_kind == "workspace" %}
+    "packaging==26.1", # tests/test_workspace.py reads the members' requirements with it
+{%- endif %}
+    "pytest==9.0.3",
+    "pytest-cov==7.1.0",
+    "pytest-timeout==2.4.0",
+    "pytest-xdist==3.8.0",
+    "ruff==0.15.14",
+    "ty==0.0.38",
+    "vulture==2.14",
+]
+# `just audit`'s and security.yml's: pip-audit over the exported lock, in an environment of its
+# own -- not the dev group, so not in `uv sync`'s
+audit = ["pip-audit==2.10.0"]
+# `just changelog`'s and `just release`'s: git-cliff, run as `audit` is
+release = ["git-cliff==2.13.1"]
+
+[tool.uv]
+# uv too is nixpkgs' (the `pins` check): its resolver writes and checks the lock, and setup-uv
+# installs this one in the workflows (its README: `required-version`, else the latest)
+required-version = "==0.11.21"
+{%- if project_kind == "workspace" %}
+
+[tool.uv.workspace]
+members = ["packages/*"]
+{%- endif %}
+
+[tool.ruff]
+target-version = "py{{ python_min | remove: "." }}"
+line-length = 100
+# first-party: the packages' import roots
+{%- if project_kind == "workspace" %}
+src = [
+    "packages/{{project-name}}/src",
+    "packages/{{project-name}}-core/src",
+]
+{%- else %}
+src = ["src"]
+{%- endif %}
+
+[tool.ruff.lint]
+# Every rule, then the few that conflict or are wrong here, each with its reason. A newer ruff
+# (the `pins`) adds rules: read them, don't silence them.
+select = ["ALL"]
+ignore = [
+    # ruff's own docs: these conflict with `ruff format`, which owns trailing commas and implicit
+    # string concatenation
+    "COM812",
+    "ISC001",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: assert is the tool; literal expectations are the point; a docstring per test would
+# repeat its name; the test folders are no packages (pytest's importlib mode needs none).
+"**/tests/**" = ["S101", "PLR2004", "D", "INP001"]
+
+[tool.basedpyright]
+# every rule, warnings failing: the strictest mode, as the code starts clean
+typeCheckingMode = "all"
+failOnWarnings = true
+pythonVersion = "{{python_min}}"
+# the import roots, resolved from the tree whatever is installed (the flake's types check has no
+# editable install)
+{%- if project_kind == "workspace" %}
+include = ["packages", "tests"]
+extraPaths = [
+    "packages/{{project-name}}/src",
+    "packages/{{project-name}}-core/src",
+]
+{%- else %}
+include = ["src", "tests"]
+extraPaths = ["src"]
+{%- endif %}
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+{%- if project_kind == "workspace" %}
+testpaths = [
+    "packages/{{project-name}}-core/tests",
+    "packages/{{project-name}}/tests",
+    "tests",
+]
+{%- else %}
+testpaths = ["tests"]
+{%- endif %}
+# importlib: nothing put on sys.path, so the tests import the package as installed -- the
+# editable one here, the built one in the flake's checks
+addopts = ["--strict-markers", "--strict-config", "-ra", "--import-mode=importlib"]
+xfail_strict = true
+filterwarnings = ["error"] # a warning fails the suite rather than scrolling by
+timeout = 300
+
+[tool.coverage.run]
+branch = true
+{%- if project_kind == "workspace" %}
+source = ["{{crate_name}}", "{{crate_name}}_core"]
+{%- else %}
+source = ["{{crate_name}}"]
+{%- endif %}
+
+[tool.coverage.report]
+# every line and branch: lowered with a reason, never quietly
+fail_under = 100
+show_missing = true
+
+[tool.vulture]
+# the tests too: they are what uses a library's public API; a fixture is used by name, which
+# vulture cannot see
+{%- if project_kind == "workspace" %}
+paths = ["packages", "tests"]
+{%- else %}
+paths = ["src", "tests"]
+{%- endif %}
+ignore_decorators = ["@pytest.fixture"]

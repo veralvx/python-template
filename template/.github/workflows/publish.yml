@@ -1,0 +1,38 @@
+# A release tag publishes its package to PyPI through Trusted Publishing: no token stored. Once,
+# on pypi.org, for each package (a workspace's every member): a pending publisher naming this
+# repository, this workflow (publish.yml) and the `pypi` environment. Not a reusable workflow:
+# Trusted Publishing takes none.
+name: Publish
+
+on:
+  push:
+    # a single package's v1.2.3, a workspace member's name-v1.2.3
+    tags: ["v[0-9]*", "*-v[0-9]*"]
+
+permissions: {}
+
+jobs:
+  pypi:
+    name: PyPI
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+    permissions:
+      id-token: write # the short-lived token Trusted Publishing exchanges
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Build the tag's package
+        # --no-sources: as any other builder sees it, without the workspace's sources (uv's guide)
+        run: |
+          read -r package _ _ < <(.github/package-tag.sh "$GITHUB_REF_NAME")
+          uv build --package "$package" --no-sources
+
+      - name: Publish
+        # always: a publisher missing fails as such, not as credentials asked for
+        run: uv publish --trusted-publishing always

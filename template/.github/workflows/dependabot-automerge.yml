@@ -1,0 +1,58 @@
+name: Dependabot Auto-Merge
+
+# Required repository settings (do these once):
+# 1. Settings → General → Allow auto-merge          ← enable
+# 2. Settings → Branches → Branch protection rule on main:
+#      - Require a pull request before merging
+#      - Require status checks to pass before merging (select the real CI
+#        jobs: Checks', the Conventional Commits and dprint checks, Nix's)
+#
+# The `permissions:` below are all this workflow's token needs; the
+# repository's default token permissions can stay read-only.
+#
+# Without step 2 this workflow merges dependency bumps that no CI job
+# ever gated. Auto-merge waits for *required* checks, and a repository
+# with no required checks has nothing to wait for. Those workflows run on
+# every pull request (no path filter), so a required check always reports.
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  dependabot:
+    runs-on: ubuntu-latest
+    # Use user.login (the PR author), not github.actor (whoever triggered
+    # this run).  github.actor can change on re-runs or force-pushes,
+    # whereas user.login is always the account that opened the PR.
+    # Ref: https://docs.github.com/en/code-security/dependabot/working-with-dependabot/automating-dependabot-with-github-actions
+    #
+    # To stop forks from auto-merging their own bumps, add a repository
+    # pin to this condition:
+    #     && github.repository == 'your-org/your-repo'
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge for patch and minor updates
+        # update-type only emits version-update:semver-{patch,minor,major}.
+        # There is NO "security:" prefix; security updates carry the same
+        # semver labels.  To gate on security status, enable alert-lookup
+        # (requires a PAT) and check steps.metadata.outputs.alert-state.
+        if: >-
+          contains(
+            fromJSON('["version-update:semver-patch", "version-update:semver-minor"]'),
+            steps.metadata.outputs.update-type
+          )
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,52 @@
+# The flake's checks (nix/checks.nix): the tests and types on every Python .python-versions
+# lists, against the built packages; lint, dead code, the pins, the command -- built on each
+# system the flake declares: x86_64 and aarch64 Linux, Apple silicon (macos-latest). A runner
+# builds its own system's alone, so every system is also evaluated, nothing built, in one job.
+name: Nix
+
+on:
+  push:
+    branches: [main]
+  # every pull request, whatever it touches: a path-filtered workflow never reports, and a
+  # required check that never reports blocks the merge
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  flake-check:
+    name: nix flake check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nix
+        # flakes on, and the job's token for GitHub fetches
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      - name: nix flake check
+        run: nix flake check --print-build-logs
+
+  evaluate:
+    name: nix flake check --all-systems (evaluation)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      - name: Evaluate
+        run: nix flake check --no-build --all-systems

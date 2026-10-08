@@ -1,0 +1,229 @@
+# NOTE: this file is copied verbatim by cargo-generate and is never processed by the template
+# engine -- the double-brace interpolation below is just's own. It is project-agnostic: what a
+# recipe needs to know it reads at run time -- pyproject.toml, and whether the root is a
+# workspace (a root without a [project] table: uv's virtual root).
+#
+# Formatted with `just --fmt --unstable`. The commands are the workflows' (.github/workflows/).
+
+[doc("List the recipes")]
+default:
+    @just --list --unsorted
+
+[doc("The lock and the environment: the project, its dev group (`uv sync --locked`)")]
+sync:
+    uv sync --locked
+
+[doc("Format the code, the Markdown and the TOML (modifies files)")]
+format:
+    uv run --locked ruff format
+    dprint fmt
+
+[doc("The code's format, checked")]
+format-check:
+    uv run --locked ruff format --check
+
+[doc("The linter (modifies nothing)")]
+lint:
+    uv run --locked ruff check
+
+[doc("format-check and lint")]
+ruff-checks: format-check lint
+
+[doc("Types: basedpyright blocks; ty is advisory, its failure ignored")]
+static:
+    uv run --locked basedpyright
+    -uv run --locked ty check
+
+[doc("Dead code")]
+vulture:
+    uv run --locked vulture
+
+[doc("The tests, every line and branch covered ([tool.coverage])")]
+pytest:
+    uv run --locked pytest --cov -n auto
+
+[doc("The lock matches the pyproject files")]
+lock-check:
+    uv lock --check
+
+[doc("Markdown and TOML formatted (dprint.json)")]
+dprint-check:
+    dprint check
+
+[doc("dprint's plugins to their latest releases (dprint.json), then everything rechecked")]
+dprint-update:
+    dprint config update
+    dprint check
+
+[doc("Every commit conventional (cog.toml)")]
+cog:
+    cog check
+
+[doc("pip-audit over the lock, exported")]
+audit:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    requirements=$(mktemp)
+    trap 'rm -f "$requirements"' EXIT
+    # every group, the workspace's own packages left out: they are this repository
+    uv export --locked --all-packages --all-groups --no-emit-workspace \
+        --format requirements.txt --quiet --output-file "$requirements"
+    uv run --locked --isolated --only-group audit \
+        pip-audit --strict --disable-pip --require-hashes -r "$requirements"
+
+[doc("The flake: every system evaluated, this one's checks built")]
+nix:
+    nix flake check --no-build --all-systems
+    nix flake check
+
+# `nix` last: the slowest, and the one a machine without Nix cannot run -- every other has passed
+# by then. The flake sees git's files only: a new file is invisible to it until `git add`ed.
+[doc("Every check, the flake's last")]
+checks: lock-check ruff-checks static vulture pytest dprint-check cog audit nix
+
+[doc("Every package's sdist and wheel into dist/, as publish.yml builds them (--no-sources)")]
+build:
+    uv build --all-packages --no-sources
+
+# Opt-in, as every git hook is: a clone never installs one, so CI stays the gate.
+# `git config --unset core.hooksPath` turns them off again.
+[doc("Use .githooks: the lock, ruff and dprint before a commit; Conventional Commits for the message and before a push")]
+install-hooks:
+    git config core.hooksPath .githooks
+
+# git-cliff, offline, with the repository the compare links need read from pyproject.toml's
+# Repository (cliff.toml is project-agnostic). In a workspace the package comes first: its
+# folder's commits, its tags -- the name, `-v`, then a version's first number, so `foo-v2-v1.0.0`
+# (a member foo-v2's) is no tag of foo's.
+[doc("The changelog (cliff.toml): `just changelog [package] --unreleased` previews the next release")]
+[positional-arguments]
+changelog *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if grep -q '^\[project\]' pyproject.toml; then
+        manifest=pyproject.toml
+        scope=(--tag-pattern '^v[0-9]+(\.|$)')
+    else
+        package="${1:?in a workspace, the package comes first: just changelog <package> ...}"
+        shift
+        manifest="packages/$package/pyproject.toml"
+        [ -f "$manifest" ] || { echo "error: no workspace member $package (packages/$package)" >&2; exit 1; }
+        scope=(--include-path "packages/$package/**" --tag-pattern "^${package//./\\.}-v[0-9]+(\\.|$)")
+    fi
+    url="$(sed -n 's/^Repository[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest")"
+    case "$url" in
+        https://github.com/*/*) repo="${url#https://github.com/}"; repo="${repo%.git}"; repo="${repo%/}" ;;
+        *) echo "error: $manifest's Repository is not a GitHub URL (got '$url')" >&2; exit 1 ;;
+    esac
+    uv run --locked --isolated --only-group release \
+        git-cliff --offline --config cliff.toml --github-repo "$repo" "${scope[@]}" "$@"
+
+# Every step here, in order -- nothing in a hook or another tool's config. The version is uv's
+# (`uv version --bump`); the first release is the version pyproject.toml declares, whatever the
+# level. Single package: `just release minor`, tag v0.2.0. Workspace: `just release <package>
+# minor`, tag <package>-v0.2.0. The tag publishes (publish.yml) and makes the GitHub release
+# (release.yml).
+[doc("Release: just release [package] <major|minor|patch> -- checks, version, changelog, commit, tag, push")]
+[positional-arguments]
+release *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # 0. The arguments -- passed as $1 and $2, never spliced into this script's text
+    if grep -q '^\[project\]' pyproject.toml; then
+        [ $# -eq 1 ] || { echo "usage: just release <major|minor|patch>" >&2; exit 1; }
+        level="$1"; package=""; folder="."; prefix="v"
+        manifests=(pyproject.toml)
+    else
+        [ $# -eq 2 ] || { echo "usage: just release <package> <major|minor|patch>" >&2; exit 1; }
+        package="$1"; level="$2"; folder="packages/$package"; prefix="$package-v"
+        [ -f "$folder/pyproject.toml" ] || { echo "error: no workspace member $package ($folder)" >&2; exit 1; }
+        manifests=("$folder/pyproject.toml")
+    fi
+    case "$level" in
+        major|minor|patch) ;;
+        *) echo "error: the level must be major, minor or patch (got '$level')" >&2; exit 1 ;;
+    esac
+    version_of=(uv version --short ${package:+--package "$package"})
+    changelog="$folder/CHANGELOG.md"
+
+    # 1. From a clean main, up to date with origin
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "error: the working tree is not clean: commit or stash first" >&2; exit 1
+    fi
+    if [ "$(git branch --show-current)" != main ]; then
+        echo "error: a release is cut from main" >&2; exit 1
+    fi
+    git fetch origin
+    git rev-parse --quiet --verify origin/main > /dev/null \
+        || { echo "error: origin has no main: push it first" >&2; exit 1; }
+    if [ "$(git rev-list --count HEAD..origin/main)" -ne 0 ]; then
+        echo "error: main is behind origin/main: pull first" >&2; exit 1
+    fi
+
+    # 2. The version: the declared one at the first release (no tag yet), else uv's bump
+    declared="$("${version_of[@]}")"
+    # the package's tags, as `just changelog` matches them: the prefix, then a version
+    released="$(git tag --list "${prefix}[0-9]*" | grep -E "^${prefix//./\\.}[0-9]+(\\.|$)" || true)"
+    if [ -z "$released" ]; then
+        version="$declared"; bump=false
+    else
+        version="$("${version_of[@]}" --bump "$level" --dry-run)"; bump=true
+    fi
+    tag="$prefix$version"
+    if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
+        echo "error: $tag is already tagged" >&2; exit 1
+    fi
+
+    # 3. Something to release: a commit since the last tag that enters the changelog
+    entries="$(just changelog ${package:+"$package"} --unreleased --context \
+        | uv run --locked --isolated --only-group release python -c \
+            'import json, sys; print(sum(len(r["commits"]) for r in json.load(sys.stdin)))')"
+    if [ "$entries" -eq 0 ]; then
+        echo "error: nothing to release -- no commit since the last tag would enter the changelog" >&2
+        exit 1
+    fi
+
+    # 4. Every check CI runs, before anything is written
+    just checks
+
+    # If anything below fails before the commit, put back what it changed: the manifest and the
+    # lock from HEAD, and a changelog the first release created (HEAD's, not the index's: it may
+    # be staged by then).
+    restore() {
+        echo "Release aborted -- restoring the files it changed." >&2
+        git checkout HEAD -- "${manifests[@]}" uv.lock
+        if git cat-file -e "HEAD:$changelog" 2> /dev/null; then
+            git checkout HEAD -- "$changelog"
+        else
+            git rm --quiet --cached --ignore-unmatch "$changelog"
+            rm -f "$changelog"
+        fi
+    }
+    trap restore ERR
+
+    # 5. The version, written (pyproject.toml and uv.lock); none at the first release
+    if [ "$bump" = true ]; then
+        "${version_of[@]}" --bump "$level" --no-sync > /dev/null
+    fi
+    if [ "$("${version_of[@]}")" != "$version" ]; then
+        # an explicit exit runs no ERR trap: restore first
+        echo "error: the version written is not $version" >&2; restore; exit 1
+    fi
+
+    # 6. The changelog, the release's section on top
+    just changelog ${package:+"$package"} --tag "$tag" --output "$changelog"
+
+    # 7. Commit, then change the trap: a refused commit (a git hook) still restores the files, but
+    #    once committed, a failure is finished by hand -- a re-run would bump again
+    git add "${manifests[@]}" uv.lock "$changelog"
+    git commit -m "chore(release): $tag"
+    finish() {
+        echo "error: $tag is committed; finish it by hand: git tag -a $tag -m 'Release $tag' (unless tagged), then git push --atomic origin main $tag" >&2
+    }
+    trap finish ERR
+    git tag -a "$tag" -m "Release $tag"
+
+    # 8. The commit and the tag together, both or neither
+    git push --atomic origin main "$tag"
+    echo "Released $tag: publish.yml and release.yml take it from here."
