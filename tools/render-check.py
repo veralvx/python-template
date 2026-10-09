@@ -331,7 +331,7 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one gate, read top to botto
         if any(f.startswith("src/") for f in rendered_files) == (kind == "workspace"):
             fail(f"{label}: src/ dropped for {kind}")
         # the image: its Nix file, its workflow and the flake's output, all or none
-        for name in ("nix/image.nix", ".github/workflows/image.yml"):
+        for name in ("nix/image.nix", ".github/workflows/image.yml", ".github/image-registries.sh"):
             if (name in rendered_files) != image:
                 fail(f"{label}: {name} {'missing' if image else 'kept'}")
         if ("nix/image.nix" in outputs["flake.nix"]) != image:

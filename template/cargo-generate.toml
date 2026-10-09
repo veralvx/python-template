@@ -118,6 +118,7 @@ ignore = [
     "packages",
     "nix/image.nix",
     ".github/workflows/image.yml",
+    ".github/image-registries.sh",
 ]
 
 [conditional.'project_kind == "bin"']
@@ -125,7 +126,7 @@ ignore = ["tests/test_workspace.py", "packages"]
 
 # No image: neither its Nix file nor its workflow (a lib has neither: its kind's own ignore).
 [conditional.'project_kind != "lib" && !container_image']
-ignore = ["nix/image.nix", ".github/workflows/image.yml"]
+ignore = ["nix/image.nix", ".github/workflows/image.yml", ".github/image-registries.sh"]
 
 # The workspace keeps its sources in its members under packages/; the root's tests check the
 # workspace as a whole.

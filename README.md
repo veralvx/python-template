@@ -99,10 +99,11 @@ for GHCR. `nix build .#image` gives the gzipped docker-archive and the flake's c
 `.#image.stream` streams it uncompressed, sparing the store a second copy of the closure.
 `image.yml`, on the command's release tag, streams it into Docker on amd64 and arm64, runs it,
 pushes each, and joins them as `ghcr.io/<owner>/<repository>:<version>` (`latest` too while it is
-the command's highest release), with the job's token; run by hand, it builds and runs the image on
-both, pushing nothing (on a tag, it publishes that release again). The image holds no CA
-certificates: Python's `ssl` verifying against the system's needs `contents = [ pkgs.cacert ]` and
-`SSL_CERT_FILE` in `config.Env`.
+the command's highest release), with the job's token -- and to Docker Hub too, under the same tags,
+once the secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` are set (`.github/image-registries.sh`);
+run by hand, it builds and runs the image on both, pushing nothing (on a tag, it publishes that
+release again). The image holds no CA certificates: Python's `ssl` verifying against the system's
+needs `contents = [ pkgs.cacert ]` and `SSL_CERT_FILE` in `config.Env`.
 
 ## What you get
 
@@ -123,7 +124,7 @@ AGENTS.md             the lint and type policy, and what to do when a rule fires
 README, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT
 LICENSE-MIT / LICENSE-APACHE (a workspace member carries its own copies)
 .github/              9 workflows (10 with the image), dependabot, issue and PR templates,
-                      the tag and release-notes scripts
+                      the tag, release-notes (and image registries) scripts
 ```
 
 ### The tools, pinned to nixpkgs
@@ -149,8 +150,9 @@ rust-template: the pins are only right for the nixpkgs they were taken from.
   every commit, and a pull request's title (a squash merge makes it the commit).
 - `release.yml`, `publish.yml` -- a release tag makes the GitHub release (the changelog's section
   as notes) and publishes to PyPI by Trusted Publishing, no token stored.
-- `image.yml` (with the image) -- the command's release tag pushes its OCI image to GHCR, for
-  amd64 and arm64, after running it; by hand on a branch, a rehearsal that pushes nothing.
+- `image.yml` (with the image) -- the command's release tag pushes its OCI image to GHCR (and
+  Docker Hub, given its secrets), for amd64 and arm64, after running it; by hand on a branch, a
+  rehearsal that pushes nothing.
 - `dependabot-automerge.yml` -- merges Dependabot's patch and minor action bumps once the
   required checks pass. Read its setup comment: without required checks it merges what CI never
   gated.

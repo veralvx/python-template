@@ -98,7 +98,7 @@ jobs:
                 dir="$out/$name"
                 want=absent
                 if [ "$kind" != lib ] && [ -n "$email" ]; then want=present; fi
-                for file in nix/image.nix .github/workflows/image.yml; do
+                for file in nix/image.nix .github/workflows/image.yml .github/image-registries.sh; do
                   have=$([ -f "$dir/$file" ] && echo present || echo absent)
                   if [ "$have" != "$want" ]; then
                     echo "::error::$dir/$file is $have, expected $want" >&2
