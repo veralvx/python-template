@@ -30,7 +30,8 @@ Then, in whichever order suits you:
   [SECURITY.md](SECURITY.md) and the issue form point to it.
 - Add a pending publisher on [PyPI](https://pypi.org/manage/account/publishing/) for each
   package: this repository, the workflow `publish.yml`, the environment `pypi`. A release tag
-  then publishes without a stored token. {% if project_kind == "workspace" %}The packages are
+  then publishes without a stored token, and its GitHub release follows PyPI's: without the
+  publisher, neither is made. {% if project_kind == "workspace" %}The packages are
   `{{project-name}}` and `{{project-name}}-core`.{% else %}The package is `{{project-name}}`.{% endif %}
 {%- if project_kind != "lib" and container_image %}
 - After the first release, make the image public: GHCR publishes a new package as private (its

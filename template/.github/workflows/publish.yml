@@ -27,6 +27,7 @@ jobs:
       package: ${{ steps.build.outputs.package }}
       version: ${{ steps.build.outputs.version }}
       latest: ${{ steps.build.outputs.latest }}
+      prerelease: ${{ steps.build.outputs.prerelease }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,10 +49,18 @@ jobs:
           if [[ $folder != . ]] && ! grep -q '^\[project\.scripts\]' "$folder/pyproject.toml"; then
             latest=false
           fi
+          # a dev, alpha, beta or candidate (not N.N.N, a .postN allowed: image.yml's final) is a
+          # GitHub pre-release, never the latest
+          prerelease=false
+          if [[ ! $version =~ ^[0-9]+(\.[0-9]+)*(\.post[0-9]+)?$ ]]; then
+            prerelease=true
+            latest=false
+          fi
           {
             echo "package=$package"
             echo "version=$version"
             echo "latest=$latest"
+            echo "prerelease=$prerelease"
           } >> "$GITHUB_OUTPUT"
 
       - name: Keep the files
@@ -112,6 +121,8 @@ jobs:
           PACKAGE: ${{ needs.build.outputs.package }}
           VERSION: ${{ needs.build.outputs.version }}
           LATEST: ${{ needs.build.outputs.latest }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
-            --latest="$LATEST" --title "$PACKAGE $VERSION" --notes-file notes.md
+            --latest="$LATEST" --prerelease="$PRERELEASE" --title "$PACKAGE $VERSION" \
+            --notes-file notes.md
