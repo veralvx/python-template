@@ -250,6 +250,10 @@ Also confirmed by running it:
   without) pass dprint, nixfmt, actionlint and shellcheck and evaluate on all three systems;
   the image, its check and its workflow exist exactly where chosen, on Linux alone, and five
   of them, one per kind and choice, pass the full list above too.
+- **Docker Hub**: image.yml's push and multi-architecture steps, run against a recording
+  `docker`, make with no Docker Hub settings the very calls they made before it; with both, each
+  architecture pushed to both registries and each index made from its own; with one alone, a name
+  Docker would refuse, or a dotted repository name, they stop after GHCR's login, before any push.
 - **The name hook** refuses `3d-tool`, `async`, `calendar` and `Über-tool`, and is not copied.
 - **The types on every Python**: basedpyright and ty pass the starter code at 3.12, 3.13 and 3.14
   (`--pythonversion`, as CI and the flake run them); the flake's test environment holds the dev
