@@ -4,8 +4,8 @@
 # is the command's highest release). The job's token pushes: no secret stored. A first push is
 # private (GHCR's default): make the package public in its settings once. The per-architecture
 # tags (<version>-amd64, <version>-arm64) stay, the multi-architecture tag's parts. Run by hand
-# (workflow_dispatch), it builds and runs the image on both, pushing nothing: a rehearsal before
-# the first release.
+# (workflow_dispatch) on a branch, it builds and runs the image on both, pushing nothing: a
+# rehearsal before the first release; on a tag, it publishes that release again.
 name: Image
 
 on:
@@ -13,11 +13,6 @@ on:
     # release.yml's tags; a workspace's library tag builds nothing
     tags: ["v[0-9]*", "*-v[0-9]*"]
   workflow_dispatch:
-
-# one release at a time, in order: a later tag's `latest` is never overtaken by an earlier one's
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: false
 
 permissions: {}
 
@@ -93,7 +88,7 @@ jobs:
           loaded="$(nix eval --raw .#image.imageName):$version"
           # the image as a user runs it: its entrypoint, as its user
           expected="$(nix eval --raw .#default.meta.mainProgram) $version"
-          actual="$(docker run --rm "$loaded" --version)"
+          actual="$(docker run --rm --pull never "$loaded" --version)"
           if [[ $actual != "$expected" ]]; then
             echo "::error::--version gave '$actual', expected '$expected'" >&2
             exit 1
@@ -141,7 +136,7 @@ jobs:
           # `latest`: the command's highest final release (PEP 440's normalised form: N.N.N,
           # maybe .postN), so a patch to an older line leaves it where it is
           highest="$(git tag --list "${prefix}[0-9]*" | sed "s/^${prefix}//" \
-            | grep -E '^[0-9]+(\.[0-9]+)*(\.post[0-9]+)?$' | sort -V | tail -n 1)"
+            | { grep -E '^[0-9]+(\.[0-9]+)*(\.post[0-9]+)?$' || true; } | sort -V | tail -n 1)"
           if [[ $VERSION == "$highest" ]]; then tags+=(--tag "$repository:latest"); fi
           docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<< "$GH_TOKEN"
           # a multi-architecture image's description is its index's annotation (GHCR's docs)
