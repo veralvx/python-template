@@ -124,10 +124,8 @@ src = ["src"]
 # (the `pins`) adds rules: read them, don't silence them.
 select = ["ALL"]
 ignore = [
-    # ruff's own docs: these conflict with `ruff format`, which owns trailing commas and implicit
-    # string concatenation
+    # ruff's own docs: it conflicts with `ruff format`, which owns trailing commas
     "COM812",
-    "ISC001",
 ]
 
 [tool.ruff.lint.pydocstyle]
@@ -135,8 +133,9 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 # Tests: assert is the tool; literal expectations are the point; a docstring per test would
-# repeat its name; the test folders are no packages (pytest's importlib mode needs none).
-"**/tests/**" = ["S101", "PLR2004", "D", "INP001"]
+# repeat its name (D1: one written still keeps the convention); the test folders are no
+# packages (pytest's importlib mode needs none).
+"**/tests/**" = ["S101", "PLR2004", "D1", "INP001"]
 
 [tool.basedpyright]
 # every rule, warnings failing: the strictest mode, as the code starts clean
