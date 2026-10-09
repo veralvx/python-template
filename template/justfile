@@ -121,8 +121,8 @@ changelog *args:
 # Every step here, in order -- nothing in a hook or another tool's config. The version is uv's
 # (`uv version --bump`); the first release is the version pyproject.toml declares, whatever the
 # level. Single package: `just release minor`, tag v0.2.0. Workspace: `just release <package>
-# minor`, tag <package>-v0.2.0. The tag publishes (publish.yml) and makes the GitHub release
-# (release.yml).
+# minor`, tag <package>-v0.2.0. The tag publishes to PyPI and makes the GitHub release, of the
+# same files (publish.yml).
 [doc("Release: just release [package] <major|minor|patch> -- checks, version, changelog, commit, tag, push")]
 [positional-arguments]
 release *args:
@@ -226,4 +226,4 @@ release *args:
 
     # 8. The commit and the tag together, both or neither
     git push --atomic origin main "$tag"
-    echo "Released $tag: publish.yml and release.yml take it from here."
+    echo "Released $tag: publish.yml takes it from here."

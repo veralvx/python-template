@@ -149,8 +149,10 @@ rust-template: the pins are only right for the nixpkgs they were taken from.
 - `dependency-review.yml` -- licence and advisory review on pull requests.
 - `style-check-dprint.yml`, `style-check-cocogitto.yml` -- formatting, and Conventional Commits:
   every commit, and a pull request's title (a squash merge makes it the commit).
-- `release.yml`, `publish.yml` -- a release tag makes the GitHub release (the changelog's section
-  as notes) and publishes to PyPI by Trusted Publishing, no token stored.
+- `publish.yml` -- a release tag builds its package once, publishes it to PyPI by Trusted
+  Publishing (no token stored; attestations), then makes the GitHub release of the same files,
+  the changelog's section as notes. Only the PyPI job can mint a token; only the release job can
+  write.
 - `image.yml` (with the image) -- the command's release tag pushes its OCI image to GHCR (and
   Docker Hub, given its secrets), for amd64 and arm64, after running it; by hand on a branch, a
   rehearsal that pushes nothing.
@@ -207,8 +209,8 @@ left unexpanded and that the result parses as TOML, YAML, JSON and -- with `nix-
 real cargo-generate (manifests, licence files, dprint); and for each kind, in the generated
 flake's dev shell, the lock written, the hooks refusing what CI would, `just checks` with the
 flake's checks built, the changelog and the build; and for `bin` and `workspace` (`lib` releases
-as `bin` does), real releases against a bare remote, each tag then read as `release.yml` and
-`publish.yml` read it.
+as `bin` does), real releases against a bare remote, each tag then read as `publish.yml` reads
+it.
 
 ## Verification status
 

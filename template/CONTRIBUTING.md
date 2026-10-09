@@ -132,9 +132,9 @@ The tag is `v<version>`.
 The recipe shows every step, in order: it refuses a release with nothing in it, runs
 `just checks`, sets the version (`uv version --bump`, the lock with it), writes the changelog
 (git-cliff), commits, tags, and pushes the commit and the tag together. The first release is the
-version `pyproject.toml` declares, whatever the level. The tag runs `publish.yml` (PyPI, by
-Trusted Publishing) and `release.yml` (the GitHub release, its notes the changelog's new
-section){% if project_kind != "lib" and container_image %}; the command's, `image.yml` too (its OCI
+version `pyproject.toml` declares, whatever the level. The tag runs `publish.yml`: the package
+built once, published to PyPI by Trusted Publishing, then its GitHub release of the same files,
+its notes the changelog's new section{% if project_kind != "lib" and container_image %}; the command's, `image.yml` too (its OCI
 image to GHCR, from the flake's `image`: `nix build .#image` builds it here){% endif %}.
 
 - The commits since the last tag must hold a change a user meets (`feat`, `fix`, `perf`,

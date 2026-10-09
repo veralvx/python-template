@@ -13,7 +13,7 @@ name: Image
 
 on:
   push:
-    # release.yml's tags; a workspace's library tag builds nothing
+    # publish.yml's tags; a workspace's library tag builds nothing
     tags: ["v[0-9]*", "*-v[0-9]*"]
   workflow_dispatch:
 

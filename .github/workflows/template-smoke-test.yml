@@ -15,7 +15,7 @@ name: Template smoke test
 #                  lock written, the git hooks refusing what CI would, `just checks` -- the
 #                  flake's checks built last, the image among them -- the image run; and, but
 #                  for lib (bin's recipe), real releases against a bare remote, each tag read as
-#                  release.yml and publish.yml read it
+#                  publish.yml reads it
 
 on:
   push:
@@ -25,8 +25,9 @@ on:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC
   workflow_dispatch:
 
+# a pull request's newest run cancels its older ones; any other run, a group of its own
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -298,7 +299,7 @@ jobs:
               exit 1
             fi
           fi
-          # each tag as release.yml and publish.yml read it, at its own commit
+          # each tag as publish.yml reads it, at its own commit
           for tag in $(git tag); do
             git checkout --quiet "$tag"
             read -r package folder version < <(run .github/package-tag.sh "$tag")

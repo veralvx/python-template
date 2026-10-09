@@ -1,7 +1,13 @@
-# A release tag publishes its package to PyPI through Trusted Publishing: no token stored. Once,
-# on pypi.org, for each package (a workspace's every member): a pending publisher naming this
-# repository, this workflow (publish.yml) and the `pypi` environment. Not a reusable workflow:
-# Trusted Publishing takes none.
+# A release tag (`just release`) publishes its package (package-tag.sh): built once, published to
+# PyPI through Trusted Publishing -- no token stored; once, on pypi.org, for each package (a
+# workspace's every member): a pending publisher naming this repository, this workflow
+# (publish.yml) and the `pypi` environment -- then its GitHub release of the same files, its notes
+# the release's section of its CHANGELOG.md (release-notes.sh), read from the tag's own commit, so
+# a re-run gives the same notes. Least privilege, as PyPI's security model advises ("Limit the
+# scope of your publishing job"): the build, which runs the build backend, writes nothing but its
+# artifacts and mints no token (setup-uv's cache is off on a tag); only the PyPI job can mint
+# PyPI's token, only the release job can write the repository. Not a reusable workflow: Trusted
+# Publishing takes none.
 name: Publish
 
 on:
@@ -12,27 +18,100 @@ on:
 permissions: {}
 
 jobs:
-  pypi:
-    name: PyPI
+  build:
+    name: Build
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
     permissions:
-      id-token: write # the short-lived token Trusted Publishing exchanges
       contents: read
+    outputs:
+      package: ${{ steps.build.outputs.package }}
+      version: ${{ steps.build.outputs.version }}
+      latest: ${{ steps.build.outputs.latest }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
 
-      - name: Build the tag's package
+      - name: Build the tag's package, and its notes
+        id: build
         # --no-sources: as any other builder sees it, without the workspace's sources (uv's guide)
         run: |
-          read -r package _ _ < <(.github/package-tag.sh "$GITHUB_REF_NAME")
+          read -r package folder version < <(.github/package-tag.sh "$GITHUB_REF_NAME")
           uv build --package "$package" --no-sources
+          .github/release-notes.sh "$folder/CHANGELOG.md" "$version" > notes.md
+          # GitHub's "Latest" is the command's release: in a workspace, not its library's
+          latest=true
+          if [[ $folder != . ]] && ! grep -q '^\[project\.scripts\]' "$folder/pyproject.toml"; then
+            latest=false
+          fi
+          {
+            echo "package=$package"
+            echo "version=$version"
+            echo "latest=$latest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Keep the files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+      - name: Keep the notes
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notes
+          path: notes.md
+          if-no-files-found: error
+
+  pypi:
+    name: PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+    permissions:
+      id-token: write # the short-lived token Trusted Publishing exchanges, and the attestations'
+    # two steps alone, as PyPI's security model advises: the files, then their upload
+    steps:
+      - name: The build's files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
 
       - name: Publish
-        # always: a publisher missing fails as such, not as credentials asked for
-        run: uv publish --trusted-publishing always
+        # PyPA's action: PEP 740 attestations on by default under Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
+  release:
+    name: GitHub release
+    needs: [build, pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: The build's files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+
+      - name: Their notes
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: notes
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE: ${{ needs.build.outputs.package }}
+          VERSION: ${{ needs.build.outputs.version }}
+          LATEST: ${{ needs.build.outputs.latest }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --latest="$LATEST" --title "$PACKAGE $VERSION" --notes-file notes.md
