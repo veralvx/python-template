@@ -1,6 +1,6 @@
 [build-system]
-# hatchling 1.27.0: core metadata 2.4 by default, the first writing License-Expression and
-# License-File (PEP 639; 1.26.x wrote 2.3 without them); the flake uses nixpkgs' own
+# hatchling 1.27.0: core metadata 2.4 by default, so License-Expression and License-File
+# (PEP 639) written -- 1.26.x's default, 2.3, holds neither; the flake uses nixpkgs' own
 requires = ["hatchling>=1.27.0"]
 build-backend = "hatchling.build"
 

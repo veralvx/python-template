@@ -29,4 +29,4 @@ updates:
           - "minor"
           - "patch"
     cooldown:
-      default-days: 3 # the one cooldown key GitHub Actions takes
+      default-days: 3 # Dependabot's default too (its options reference), set explicitly
