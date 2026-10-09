@@ -15,6 +15,12 @@ permissions:
 # for public repositories but requires GitHub Advanced Security on a
 # private one. On a private repo without it, this job fails rather than
 # skipping -- delete the workflow or enable the feature.
+#
+# What it reads: GitHub's dependency graph has no uv.lock (its supported
+# ecosystems: pip, Pipenv and Poetry files) -- the lock is security.yml's
+# pip-audit's -- and advisories match actions by semantic version alone,
+# not the commits these are pinned to ("Dependency graph supported package
+# ecosystems"). In effect this gates licences.
 jobs:
   dependency-review:
     name: License & Security Check
