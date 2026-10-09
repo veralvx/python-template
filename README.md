@@ -100,10 +100,11 @@ for GHCR. `nix build .#image` gives the gzipped docker-archive and the flake's c
 `image.yml`, on the command's release tag, streams it into Docker on amd64 and arm64, runs it,
 pushes each, and joins them as `ghcr.io/<owner>/<repository>:<version>` (`latest` too while it is
 the command's highest release), with the job's token -- and to Docker Hub too, under the same tags,
-once the secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` are set (`.github/image-registries.sh`);
-run by hand, it builds and runs the image on both, pushing nothing (on a tag, it publishes that
-release again). The image holds no CA certificates: Python's `ssl` verifying against the system's
-needs `contents = [ pkgs.cacert ]` and `SSL_CERT_FILE` in `config.Env`.
+once the variable `DOCKERHUB_USERNAME` and the secret `DOCKERHUB_TOKEN` are set
+(`.github/image-registries.sh`; a Docker Hub failure holds the GHCR release back too); run by hand,
+it builds and runs the image on both, pushing nothing (on a tag, it publishes that release again).
+The image holds no CA certificates: Python's `ssl` verifying against the system's needs
+`contents = [ pkgs.cacert ]` and `SSL_CERT_FILE` in `config.Env`.
 
 ## What you get
 
