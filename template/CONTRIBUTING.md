@@ -58,6 +58,21 @@ contributions alike.
 - **The tests import the package as installed** (pytest's `--import-mode=importlib`): the editable
   install here, the built one in the flake's checks -- so a file missing from the wheel fails
   there.
+- **Property tests** (Hypothesis), if you add them: `uv add --dev 'hypothesis==<version>'`, at
+  the flake's nixpkgs' version, and a `conftest.py` at the repository's root -- every run loads
+  it; add it to `[tool.basedpyright]`'s `include` -- loading Hypothesis's own `ci` profile:
+
+  ```python
+  """Hypothesis's `ci` profile in every run, the Nix sandbox's included."""
+
+  from hypothesis import settings
+
+  settings.load_profile("ci")
+  ```
+
+  It draws the same examples each run, with no example database and no deadline; Hypothesis
+  loads it by itself only under a CI's variable (`CI`, `GITHUB_ACTIONS`...), so the flake and a
+  local run would draw anew.
 
 ## Development Workflow
 

@@ -1,6 +1,9 @@
 # AGENTS.md
 
 Repository rules for `{{project-name}}`. These apply to every contributor, human or AI-assisted.
+Adding a dependency or a tool, the tests' rules and the release are
+[CONTRIBUTING.md](CONTRIBUTING.md)'s{% if project_kind == "workspace" %}; the workspace's layout,
+[README.md](README.md)'s{% endif %}.
 
 ## 1. The lint and type policy is the design
 
@@ -84,7 +87,7 @@ with `--no-verify`. `git revert` writes `Revert "..."`, which CI refuses: reword
 
 Run `just checks`. It is what CI runs: the lock, ruff, the types, dead code, the tests with every
 line and branch covered, dprint, the commit messages, pip-audit, and the flake's checks -- the
-tests and the types again on every supported Python, against the built packages. Reporting
+tests again on every supported Python, against the built packages, and the types on each. Reporting
 "done" on a change that has not passed it is the one thing that wastes the most time here.
 
 If a check fails for reasons unrelated to your change, say so explicitly rather than working
