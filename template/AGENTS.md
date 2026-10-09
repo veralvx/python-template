@@ -65,7 +65,13 @@ else:  # pragma: no cover -- 3.12
     ...
 ```
 
-## 4. Commits
+## 4. Comments: only what is essential
+
+A comment says what the code cannot: why it is so, the source it follows, the constraint it
+keeps. Make it concise and precise -- a line where a line does -- and never restate the code:
+that is noise, and it goes stale. A change that falsifies a comment rewrites it.
+
+## 5. Commits
 
 [Conventional Commits](https://www.conventionalcommits.org/) are enforced by `cog check` locally
 and in CI. The changelog is generated from the commits (`cliff.toml`), so the subject line is
@@ -83,7 +89,7 @@ The git hooks (`just install-hooks`) check the same before a commit and a push; 
 with `--no-verify`. `git revert` writes `Revert "..."`, which CI refuses: reword it as
 `revert: ...`.
 
-## 5. Before you claim a change is done
+## 6. Before you claim a change is done
 
 Run `just checks`. It is what CI runs: the lock, ruff, the types, dead code, the tests with every
 line and branch covered, dprint, the commit messages, pip-audit, and the flake's checks -- the
