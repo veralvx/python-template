@@ -1,28 +1,36 @@
 # The command's release tag publishes its OCI image to GHCR, as ghcr.io/<owner>/<repository>:
 # the flake's `image` (nix/image.nix) built on each Linux architecture, run once, pushed per
-# architecture, then joined under one multi-architecture tag, <version> (and `latest` for a final
-# release). The job's token pushes: no secret stored. A first push is private (GHCR's default):
-# make the package public in its settings once. The per-architecture tags (<version>-amd64,
-# <version>-arm64) stay, the multi-architecture tag's parts.
+# architecture, then joined under one multi-architecture tag, <version> (and `latest` while it
+# is the command's highest release). The job's token pushes: no secret stored. A first push is
+# private (GHCR's default): make the package public in its settings once. The per-architecture
+# tags (<version>-amd64, <version>-arm64) stay, the multi-architecture tag's parts. Run by hand
+# (workflow_dispatch), it builds and runs the image on both, pushing nothing: a rehearsal before
+# the first release.
 name: Image
 
 on:
   push:
     # release.yml's tags; a workspace's library tag builds nothing
     tags: ["v[0-9]*", "*-v[0-9]*"]
+  workflow_dispatch:
+
+# one release at a time, in order: a later tag's `latest` is never overtaken by an earlier one's
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 permissions: {}
 
 jobs:
   tag:
     name: The tag's package
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     outputs:
       command: ${{ steps.read.outputs.command }}
       version: ${{ steps.read.outputs.version }}
-      latest: ${{ steps.read.outputs.latest }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,19 +45,16 @@ jobs:
           # the image is the command's: the package with [project.scripts]
           command=false
           if grep -q '^\[project\.scripts\]' "$folder/pyproject.toml"; then command=true; fi
-          # `latest`: a final release alone (PEP 440's normalised form: N.N.N, maybe .postN)
-          latest=false
-          if [[ $version =~ ^[0-9]+(\.[0-9]+)*(\.post[0-9]+)?$ ]]; then latest=true; fi
           {
             echo "command=$command"
             echo "version=$version"
-            echo "latest=$latest"
           } >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build and push (${{ matrix.arch }})
+    name: Build and run (${{ matrix.arch }})
     needs: tag
-    if: needs.tag.outputs.command == 'true'
+    # by hand (no tag job), or the command's tag
+    if: ${{ !failure() && !cancelled() && (github.ref_type != 'tag' || needs.tag.outputs.command == 'true') }}
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
@@ -61,6 +66,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      description: ${{ steps.build.outputs.description }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,45 +75,76 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
 
-      - name: Build, run and push
+      - name: Build and run
+        id: build
         env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.tag.outputs.version }}
+          TAGGED: ${{ needs.tag.outputs.version }}
         run: |
           set -euo pipefail
-          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          version="$(nix eval --raw .#image.imageTag)"
+          # a tag's version is its package's (package-tag.sh), the image's tag
+          if [[ -n $TAGGED && $TAGGED != "$version" ]]; then
+            echo "::error::$GITHUB_REF_NAME, but the command's pyproject.toml declares $version" >&2
+            exit 1
+          fi
           # streamed into docker: no compressed copy of the closure in the store
           stream="$(nix build --no-link --print-out-paths .#image.stream)"
           "$stream" | docker load
-          loaded="$(nix eval --raw .#image.imageName):$(nix eval --raw .#image.imageTag)"
+          loaded="$(nix eval --raw .#image.imageName):$version"
           # the image as a user runs it: its entrypoint, as its user
-          expected="$(nix eval --raw .#default.meta.mainProgram) $VERSION"
+          expected="$(nix eval --raw .#default.meta.mainProgram) $version"
           actual="$(docker run --rm "$loaded" --version)"
           if [[ $actual != "$expected" ]]; then
             echo "::error::--version gave '$actual', expected '$expected'" >&2
             exit 1
           fi
-          docker tag "$loaded" "$repository:$VERSION-${{ matrix.arch }}"
+          echo "description=$(nix eval --raw .#default.meta.description)" >> "$GITHUB_OUTPUT"
+
+      - name: Push
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.tag.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker tag "$(nix eval --raw .#image.imageName):$VERSION" "$repository:$VERSION-$ARCH"
           docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<< "$GH_TOKEN"
-          docker push "$repository:$VERSION-${{ matrix.arch }}"
+          docker push "$repository:$VERSION-$ARCH"
 
   publish:
     name: Multi-architecture tag
     needs: [tag, build]
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       packages: write
     steps:
+      - name: Checkout
+        # every tag, to tell whether this one is the command's highest
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
       - name: Join the architectures
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.tag.outputs.version }}
-          LATEST: ${{ needs.tag.outputs.latest }}
+          DESCRIPTION: ${{ needs.build.outputs.description }}
         run: |
           set -euo pipefail
           repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          prefix="${GITHUB_REF_NAME%"$VERSION"}"
           tags=(--tag "$repository:$VERSION")
-          if [[ $LATEST == true ]]; then tags+=(--tag "$repository:latest"); fi
+          # `latest`: the command's highest final release (PEP 440's normalised form: N.N.N,
+          # maybe .postN), so a patch to an older line leaves it where it is
+          highest="$(git tag --list "${prefix}[0-9]*" | sed "s/^${prefix}//" \
+            | grep -E '^[0-9]+(\.[0-9]+)*(\.post[0-9]+)?$' | sort -V | tail -n 1)"
+          if [[ $VERSION == "$highest" ]]; then tags+=(--tag "$repository:latest"); fi
           docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<< "$GH_TOKEN"
+          # a multi-architecture image's description is its index's annotation (GHCR's docs)
           docker buildx imagetools create "${tags[@]}" \
+            --annotation "index:org.opencontainers.image.description=$DESCRIPTION" \
             "$repository:$VERSION-amd64" "$repository:$VERSION-arm64"

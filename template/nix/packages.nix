@@ -84,9 +84,10 @@ let
         lib.throwIf (matched == null) "${project.name}: requires-python is no floor alone" (
           lib.head matched
         );
-      # the SPDX expression's identifiers, its operators and parentheses aside
+      # the SPDX expression's licence identifiers: its operators, parentheses and `WITH`
+      # exceptions aside
       licences = lib.subtractLists [ "" "AND" "OR" ] (
-        lib.filter lib.isString (builtins.split "[ ()]+" project.license)
+        lib.filter lib.isString (builtins.split "[ ()]+|WITH [^ ()]+" project.license)
       );
       scripts = project.scripts or { };
       # what hatchling reads besides the code: the readme, and the files license-files' globs
