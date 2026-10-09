@@ -98,10 +98,11 @@ command's package -- its closure alone, no base image and no `/bin/sh`, run as `
 for GHCR. `nix build .#image` gives the gzipped docker-archive and the flake's checks build it;
 `.#image.stream` streams it uncompressed, sparing the store a second copy of the closure.
 `image.yml`, on the command's release tag, streams it into Docker on amd64 and arm64, runs it,
-pushes each, and joins them as `ghcr.io/<owner>/<repository>:<version>` (`latest` too while it
-is the command's highest release), with the job's token; run by hand, it builds and runs the
-image on both, pushing nothing (on a tag, it publishes that release again). The image holds no CA certificates: Python's `ssl` verifying
-against the system's needs `contents = [ pkgs.cacert ]` and `SSL_CERT_FILE` in `config.Env`.
+pushes each, and joins them as `ghcr.io/<owner>/<repository>:<version>` (`latest` too while it is
+the command's highest release), with the job's token; run by hand, it builds and runs the image on
+both, pushing nothing (on a tag, it publishes that release again). The image holds no CA
+certificates: Python's `ssl` verifying against the system's needs `contents = [ pkgs.cacert ]` and
+`SSL_CERT_FILE` in `config.Env`.
 
 ## What you get
 
