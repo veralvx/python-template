@@ -41,14 +41,12 @@ jobs:
         id: build
         # --no-sources: as any other builder sees it, without the workspace's sources (uv's guide)
         run: |
-          read -r package folder version < <(.github/package-tag.sh "$GITHUB_REF_NAME")
+          read -r package folder version main < <(.github/package-tag.sh "$GITHUB_REF_NAME")
           uv build --package "$package" --no-sources
           .github/release-notes.sh "$folder/CHANGELOG.md" "$version" > notes.md
-          # GitHub's "Latest" is the command's release: in a workspace, not its library's
-          latest=true
-          if [[ $folder != . ]] && ! grep -q '^\[project\.scripts\]' "$folder/pyproject.toml"; then
-            latest=false
-          fi
+          # GitHub's "Latest" is the main package's release (package-tag.sh): in a workspace,
+          # never another member's
+          latest=$main
           # a dev, alpha, beta or candidate (not N.N.N, a .postN allowed: image.yml's final) is a
           # GitHub pre-release, never the latest
           prerelease=false

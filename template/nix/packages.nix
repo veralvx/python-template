@@ -66,15 +66,22 @@ let
   globRegex =
     glob: lib.replaceStrings [ "\\*" "\\?" "\\[!" "\\[" ] [ ".*" "." "[^" "[" ] (lib.escapeRegex glob);
 
-  manifests = map (folder: {
-    inherit folder;
-    project = (lib.importTOML (folder + "/pyproject.toml")).project;
-  }) folders;
+  manifests = map (
+    folder:
+    let
+      manifest = lib.importTOML (folder + "/pyproject.toml");
+    in
+    {
+      inherit folder;
+      inherit (manifest) project;
+      tool = manifest.tool or { };
+    }
+  ) folders;
   memberNames = map (m: normalise m.project.name) manifests;
 
   build =
     self:
-    { folder, project }:
+    { folder, project, ... }:
     let
       # requires-python, a floor alone (">=3.13"): an older interpreter refused at evaluation
       floor =
@@ -178,16 +185,24 @@ let
       }) manifests
     )
   );
-  # the command when there is one -- a workspace's, its one member with scripts -- else the root
-  commands = lib.filter (p: p.meta ? mainProgram) (lib.attrValues packages);
+  # the main package: a single package's own; a workspace's, its one member marked so in its own
+  # [tool] table -- `[tool.<its name>] main = true` (tests/test_workspace.py holds it to one)
+  marked = lib.filter (m: (m.tool.${m.project.name} or { }).main or false == true) manifests;
+  main =
+    if rootManifest ? project then
+      rootManifest.project.name
+    else if lib.length marked == 1 then
+      (lib.head marked).project.name
+    else
+      throw "pyproject.toml: one workspace member is the main package, marked `[tool.<its name>] main = true` in its pyproject.toml (${toString (lib.length marked)} marked)";
+  mainPackage = packages.${normalise main};
 in
 {
   inherit packages;
+  # its command, when it has one, as an application (the same derivation)
   default =
-    if commands != [ ] then
-      python3Packages.toPythonApplication (lib.head commands)
+    if mainPackage.meta ? mainProgram then
+      python3Packages.toPythonApplication mainPackage
     else
-      packages.${
-        normalise (if rootManifest ? project then rootManifest.project.name else lib.head memberNames)
-      };
+      mainPackage;
 }

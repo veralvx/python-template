@@ -78,11 +78,15 @@ module's: `3d-tool`, `async` or `calendar` is refused.
 | `lib`       | one package, `src/<name>/`: a library                                           |
 | `workspace` | a uv workspace: `packages/<name>-core` (the library) and `packages/<name>` (the command line using it), each its own distribution, version, changelog and release |
 
-The workspace's root is uv's virtual root: no `[project]` of its own, the tool groups and the
-tools' configuration for every member. A member's requirement on another (`<name>-core>=0.1.0`)
-is resolved from the workspace by uv (`[tool.uv.sources]`) and from PyPI by anyone else;
+The workspace's root is uv's virtual root: no `[project]` of its own, the tool groups and the tools'
+configuration for every member. A member's requirement on another (`<name>-core>=0.1.0`) is resolved
+from the workspace by uv (`[tool.uv.sources]`) and from PyPI by anyone else;
 `tests/test_workspace.py` refuses a range the other member's version falls outside, and a member
-whose licence texts differ from the root's -- an sdist holds the member's folder alone.
+whose licence texts differ from the root's -- an sdist holds the member's folder alone. One member
+is the main package, `<name>`, marked in its own pyproject.toml (`[tool.<name>] main = true`: a
+`tool.<name>` table is `<name>`'s owner's, PEP 518): the flake's default, the image's command and
+GitHub's latest release; another member's tag makes no image, a command of its own or not. A single
+package is its own main package.
 
 ### The Pythons
 
@@ -94,17 +98,17 @@ and (here) a choice and a line in `template/.python-versions`.
 ### The OCI image
 
 With `container_image`, the flake has an `image` on Linux: `dockerTools.buildLayeredImage` of the
-command's package -- its closure alone, no base image and no `/bin/sh`, run as `nobody`, labelled
-for GHCR. `nix build .#image` gives the gzipped docker-archive and the flake's checks build it;
-`.#image.stream` streams it uncompressed, sparing the store a second copy of the closure.
-`image.yml`, on the command's release tag, streams it into Docker on amd64 and arm64, runs it,
+main package's command -- its closure alone, no base image and no `/bin/sh`, run as `nobody`,
+labelled for GHCR. `nix build .#image` gives the gzipped docker-archive and the flake's checks build
+it; `.#image.stream` streams it uncompressed, sparing the store a second copy of the closure.
+`image.yml`, on the main package's release tag, streams it into Docker on amd64 and arm64, runs it,
 pushes each, and joins them as `ghcr.io/<owner>/<repository>:<version>` (`latest` too while it is
-the command's highest release), with the job's token -- and to Docker Hub too, under the same tags,
-once the variable `DOCKERHUB_USERNAME` and the secret `DOCKERHUB_TOKEN` are set
+the main package's highest release), with the job's token -- and to Docker Hub too, under the same
+tags, once the variable `DOCKERHUB_USERNAME` and the secret `DOCKERHUB_TOKEN` are set
 (`.github/image-registries.sh`; a Docker Hub failure holds the GHCR release back too); run by hand,
 it builds and runs the image on both, pushing nothing (on a tag, it publishes that release again).
-The image holds no CA certificates: Python's `ssl` verifying against the system's needs
-`contents = [ pkgs.cacert ]` and `SSL_CERT_FILE` in `config.Env`.
+The image holds no CA certificates: Python's `ssl` verifying against the system's needs `contents =
+[ pkgs.cacert ]` and `SSL_CERT_FILE` in `config.Env`.
 
 ## What you get
 
@@ -153,7 +157,7 @@ rust-template: the pins are only right for the nixpkgs they were taken from.
   Publishing (no token stored; attestations), then makes the GitHub release of the same files,
   the changelog's section as notes. Only the PyPI job can mint a token; only the release job can
   write.
-- `image.yml` (with the image) -- the command's release tag pushes its OCI image to GHCR (and
+- `image.yml` (with the image) -- the main package's release tag pushes its OCI image to GHCR (and
   Docker Hub, given its secrets), for amd64 and arm64, after running it; by hand on a branch, a
   rehearsal that pushes nothing.
 - `dependabot-automerge.yml` -- merges Dependabot's patch and minor action bumps once the

@@ -122,7 +122,8 @@ assert greeting("Ada") == "Hello, Ada!"
 ## Layout
 
 - `pyproject.toml` -- the workspace: its tool groups and configuration
-- `packages/{{project-name}}/` -- the command line: argument handling only
+- `packages/{{project-name}}/` -- the command line: argument handling only; the main package
+  (`[tool.{{project-name}}] main = true`), the flake's default, its image and the latest release
 - `packages/{{project-name}}-core/` -- the library: everything worth testing
 - `tests/` -- the workspace as a whole
 

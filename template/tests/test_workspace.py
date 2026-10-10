@@ -74,6 +74,17 @@ def test_the_workspace_has_members() -> None:
     assert MEMBERS  # else every test over them is skipped, checking nothing
 
 
+def test_one_member_is_the_main_package() -> None:
+    # the flake's default, its image, GitHub's latest release (nix/packages.nix, image.yml,
+    # publish.yml): the member whose own [tool] table says so, a boolean
+    def marked(member: Path) -> bool:
+        tools = cast("dict[str, dict[str, object]]", _manifest(member).get("tool", {}))
+        return tools.get(str(_project(member)["name"]), {}).get("main") is True
+
+    main = [member.name for member in MEMBERS if marked(member)]
+    assert len(main) == 1, main
+
+
 @pytest.mark.parametrize("member", MEMBERS, ids=NAMES)
 def test_the_roots_settings_name_each_member(member: Path) -> None:
     # they list the members by hand: a member added and forgotten in one is linted, typed,

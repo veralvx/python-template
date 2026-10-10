@@ -58,6 +58,11 @@ Homepage = "https://github.com/{{github_username}}/{{project-name}}/tree/main/pa
 Issues = "https://github.com/{{github_username}}/{{project-name}}/issues"
 Repository = "https://github.com/{{github_username}}/{{project-name}}"
 
+# this workspace's main package: the flake's default, its image, GitHub's latest release -- the
+# one member so marked, in its own [tool] table (PEP 518: a tool.<name> is <name>'s owner's)
+[tool.{{project-name}}]
+main = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/{{crate_name}}"]
 

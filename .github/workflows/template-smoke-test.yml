@@ -356,8 +356,10 @@ jobs:
           # each tag as publish.yml reads it, at its own commit
           for tag in $(git tag); do
             git checkout --quiet "$tag"
-            read -r package folder version < <(run .github/package-tag.sh "$tag")
+            read -r package folder version main < <(run .github/package-tag.sh "$tag")
             test "$package-v$version" = "$tag" || test "v$version" = "$tag"
+            # the main package: a single one, or the member marked (demo); never the library
+            test "$main" = "$([ "$package" = demo-core ] && echo false || echo true)"
             run .github/release-notes.sh "$folder/CHANGELOG.md" "$version" > /dev/null
           done
           git checkout --quiet main
