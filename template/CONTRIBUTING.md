@@ -107,7 +107,7 @@ joins the flake's test environment too.
 ## Releasing (maintainers)
 
 {% if project_kind == "workspace" -%}
-Each package is released on its own, from a clean `main` up to date with `origin`:
+Each package is released on its own, from a clean `main` equal to `origin/main`, CI green on it:
 
 ```sh
 just changelog <package> --unreleased   # the section the release will write
@@ -119,7 +119,7 @@ needs its new version, and raise `{{project-name}}`'s requirement on it to that 
 the flake build against the workspace's copy, so nothing here sees a stale floor -- PyPI's users
 would.
 {%- else -%}
-From a clean `main` up to date with `origin`:
+From a clean `main` equal to `origin/main`, CI green on it:
 
 ```sh
 just changelog --unreleased   # the section the release will write
@@ -129,12 +129,13 @@ just release <major|minor|patch>
 The tag is `v<version>`.
 {%- endif %}
 
-The recipe shows every step, in order: it refuses a release with nothing in it, runs
-`just checks`, sets the version (`uv version --bump`, the lock with it), writes the changelog
-(git-cliff), commits, tags, and pushes the commit and the tag together. The first release is the
-version `pyproject.toml` declares, whatever the level. The tag runs `publish.yml`: the package
-built once, published to PyPI by Trusted Publishing, then its GitHub release of the same files,
-its notes the changelog's new section (a dev or pre-release version, a GitHub pre-release)
+The recipe shows every step, in order, and runs no tests -- CI's verdict on that commit is the
+release's: it refuses a release with nothing in it, sets the version (`uv version --bump`, the lock
+with it), writes the changelog (git-cliff), commits, tags, and pushes the commit and the tag
+together. The first release is the version `pyproject.toml` declares, whatever the level. The tag
+runs `publish.yml`: the package built once, published to PyPI by Trusted Publishing, then its GitHub
+release of the same files, its notes the changelog's new section (a dev or pre-release version, a
+GitHub pre-release)
 {%- if project_kind != "lib" and container_image %};
 the command's, `image.yml` too (its OCI image to GHCR, from the flake's `image`: `nix build
 .#image` builds it here){% endif %}.

@@ -122,8 +122,8 @@ changelog *args:
 # (`uv version --bump`); the first release is the version pyproject.toml declares, whatever the
 # level. Single package: `just release minor`, tag v0.2.0. Workspace: `just release <package>
 # minor`, tag <package>-v0.2.0. The tag publishes to PyPI and makes the GitHub release, of the
-# same files (publish.yml).
-[doc("Release: just release [package] <major|minor|patch> -- checks, version, changelog, commit, tag, push")]
+# same files (publish.yml). No tests here: what is released is origin's main, which CI checks.
+[doc("Release: just release [package] <major|minor|patch> -- version, changelog, commit, tag")]
 [positional-arguments]
 release *args:
     #!/usr/bin/env bash
@@ -147,7 +147,7 @@ release *args:
     version_of=(uv version --short ${package:+--package "$package"})
     changelog="$folder/CHANGELOG.md"
 
-    # 1. From a clean main, up to date with origin
+    # 1. From a clean main that is origin's -- pushed, so the commit released is the one CI ran on
     if [ -n "$(git status --porcelain)" ]; then
         echo "error: the working tree is not clean: commit or stash first" >&2; exit 1
     fi
@@ -157,8 +157,8 @@ release *args:
     git fetch origin
     git rev-parse --quiet --verify origin/main > /dev/null \
         || { echo "error: origin has no main: push it first" >&2; exit 1; }
-    if [ "$(git rev-list --count HEAD..origin/main)" -ne 0 ]; then
-        echo "error: main is behind origin/main: pull first" >&2; exit 1
+    if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+        echo "error: main is not origin/main: push (and let CI pass) or pull first" >&2; exit 1
     fi
 
     # 2. The version: the declared one at the first release (no tag yet), else uv's bump
@@ -184,9 +184,6 @@ release *args:
         exit 1
     fi
 
-    # 4. Every check CI runs, before anything is written
-    just checks
-
     # If anything below fails before the commit, put back what it changed: the manifest and the
     # lock from HEAD, and a changelog the first release created (HEAD's, not the index's: it may
     # be staged by then).
@@ -202,7 +199,7 @@ release *args:
     }
     trap restore ERR
 
-    # 5. The version, written (pyproject.toml and uv.lock); none at the first release
+    # 4. The version, written (pyproject.toml and uv.lock); none at the first release
     if [ "$bump" = true ]; then
         "${version_of[@]}" --bump "$level" --no-sync > /dev/null
     fi
@@ -211,10 +208,10 @@ release *args:
         echo "error: the version written is not $version" >&2; restore; exit 1
     fi
 
-    # 6. The changelog, the release's section on top
+    # 5. The changelog, the release's section on top
     just changelog ${package:+"$package"} --tag "$tag" --output "$changelog"
 
-    # 7. Commit, then change the trap: a refused commit (a git hook) still restores the files, but
+    # 6. Commit, then change the trap: a refused commit (a git hook) still restores the files, but
     #    once committed, a failure is finished by hand -- a re-run would bump again
     git add "${manifests[@]}" uv.lock "$changelog"
     git commit -m "chore(release): $tag"
@@ -224,6 +221,6 @@ release *args:
     trap finish ERR
     git tag -a "$tag" -m "Release $tag"
 
-    # 8. The commit and the tag together, both or neither
+    # 7. The commit and the tag together, both or neither
     git push --atomic origin main "$tag"
     echo "Released $tag: publish.yml takes it from here."

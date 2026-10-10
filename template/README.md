@@ -33,6 +33,10 @@ Then, in whichever order suits you:
   then publishes without a stored token, and its GitHub release follows PyPI's: without the
   publisher, neither is made. {% if project_kind == "workspace" %}The packages are
   `{{project-name}}` and `{{project-name}}-core`.{% else %}The package is `{{project-name}}`.{% endif %}
+- If you limit the `pypi` environment's deployments (Settings → Environments), admit the release
+  tags, each a rule of ref type Tag -- {% if project_kind == "workspace" %}`{{project-name}}-v*`
+  and `{{project-name}}-core-v*`{% else %}`v*`{% endif %}: the PyPI job runs on the tag, and an
+  environment that refuses it publishes nothing.
 {%- if project_kind != "lib" and container_image %}
 - After the first release, make the image public: GHCR publishes a new package as private (its
   page, Package settings → Change visibility).

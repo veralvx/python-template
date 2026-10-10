@@ -254,7 +254,7 @@ jobs:
           ls dist
 
       # the recipe that writes, commits, tags and pushes, against a bare remote: every step as
-      # a maintainer runs it, `just checks` included
+      # a maintainer runs it, each release after a push (it releases origin's main alone)
       - name: Releases
         if: matrix.kind != 'lib'
         working-directory: ${{ runner.temp }}/generated/demo
@@ -299,6 +299,21 @@ jobs:
               exit 1
             fi
           fi
+          # a commit CI never ran on, a release otherwise: refused until pushed
+          if [ ${{ matrix.kind }} = workspace ]; then
+            echo "change" >> packages/demo/README.md
+            run git commit --quiet -am "fix(cli): unpushed"
+            args=(demo patch)
+          else
+            run git commit --quiet --allow-empty -m "fix: unpushed"
+            args=(patch)
+          fi
+          if out=$(run just release "${args[@]}" 2>&1); then
+            echo "::error::a release of an unpushed main was not refused" >&2
+            exit 1
+          fi
+          grep -q "main is not origin/main" <<< "$out"
+          git reset --quiet --hard origin/main
           # each tag as publish.yml reads it, at its own commit
           for tag in $(git tag); do
             git checkout --quiet "$tag"
