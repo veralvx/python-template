@@ -185,11 +185,13 @@ release *args:
     fi
 
     # 4. In a workspace, its members' requirements on each other, which uv's lock ignores (it takes
-    #    a member from the workspace): each member requiring this one admits its new version; for
-    #    each member this one requires, a release -- its src the latest tag's, on the index (a file
-    #    not yanked: the Simple API's JSON, PEP 691), within this one's range, the floor no lower
-    #    -- else PyPI's users get a wheel that installs nowhere, or one paired with a release that
-    #    lacks what it imports. RELEASE_INDEX_URL names another index (publish.yml's, if changed).
+    #    a member from the workspace). Each member requiring this one admits its new version. Each
+    #    member this one needs, directly or through another, is released as the workspace holds
+    #    it -- its src and the fields an install reads (dependencies, scripts...) its latest tag's
+    #    -- and on the index (a file not yanked: the Simple API's JSON, PEP 691); and every
+    #    requirement between them admits that release, its floor no lower: then PyPI's links are
+    #    the workspace's, and pip installs what was tested or newer, never an older one it keeps.
+    #    RELEASE_INDEX_URL names another index (publish.yml's, if changed).
     if [ -n "$package" ]; then
         RELEASE_INDEX_URL="${RELEASE_INDEX_URL:-https://pypi.org/simple/}" \
             uv run --locked --isolated --only-group release python - "$package" "$version" <<'EOF'
@@ -207,12 +209,26 @@ release *args:
     from packaging.version import Version
 
     INDEX = os.environ["RELEASE_INDEX_URL"].rstrip("/")
+    # what pip reads of a release to install and run it; the rest (the readme, classifiers,
+    # [build-system]) changes no install
+    INSTALLED = ("dependencies", "optional-dependencies", "requires-python", "scripts",
+                 "gui-scripts", "entry-points")
 
 
-    def unchanged_since(tag, path):
-        # git diff's 0: as the tag left it (1: changed; 128: no such tag)
-        command = ["git", "diff", "--quiet", tag, "HEAD", "--", path]
-        return subprocess.run(command, check=False, stderr=subprocess.DEVNULL).returncode == 0
+    def git(*args):
+        result = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+        return result.stdout if result.returncode == 0 else None  # None: no such tag or path
+
+
+    def released(folder, project, tag):
+        # its src, and its installed fields, as the tag left them
+        if git("diff", "--quiet", tag, "HEAD", "--", str(folder / "src")) is None:
+            return False
+        manifest = git("show", f"{tag}:{(folder / 'pyproject.toml').as_posix()}")
+        if manifest is None:
+            return False
+        then = tomllib.loads(manifest)["project"]
+        return all(then.get(field) == project.get(field) for field in INSTALLED)
 
 
     def on_index(name, version):
@@ -237,43 +253,59 @@ release *args:
         return False
 
 
-    # each member by its project name: its folder (its tags' prefix), version and requirements
+    # each member by its project name: its folder (its tags' prefix), its [project] table
     members = {}
     for manifest in sorted(Path("packages").glob("*/pyproject.toml")):
         project = tomllib.loads(manifest.read_text(encoding="utf-8"))["project"]
-        members[canonicalize_name(project["name"])] = (
-            manifest.parent,
-            Version(project["version"]),
-            [Requirement(line) for line in project.get("dependencies", [])],
-        )
+        members[canonicalize_name(project["name"])] = (manifest.parent, project)
+
+
+    def version_of(name):
+        return Version(members[name][1]["version"])
+
+
+    def needs(name):
+        # the members its requirements name, with those requirements
+        for line in members[name][1].get("dependencies", []):
+            req = Requirement(line)
+            if canonicalize_name(req.name) in members:
+                yield canonicalize_name(req.name), req
+
+
     folder, upcoming = Path("packages", sys.argv[1]), Version(sys.argv[2])
-    this = next(name for name, (where, _, _) in members.items() if where == folder)
+    this = next(name for name, (where, _) in members.items() if where == folder)
     errors = []
-    for name, (_, _, requires) in members.items():
-        for req in requires:
-            if canonicalize_name(req.name) == this and not req.specifier.contains(upcoming):
+    for name in members:
+        for needed, req in needs(name):
+            if needed == this and not req.specifier.contains(upcoming):
                 errors.append(f"{name} requires {req}, not {upcoming}: widen it first")
-    for req in members[this][2]:
-        needed = canonicalize_name(req.name)
-        if needed not in members:
+    # the members this one needs, directly or through another (its closure), in the order found
+    closure, pending = [], [this]
+    while pending:
+        for needed, _ in needs(pending.pop()):
+            if needed != this and needed not in closure:
+                closure.append(needed)
+                pending.append(needed)
+    for name in closure:
+        where, project = members[name]
+        tag = f"{where.name}-v{version_of(name)}"
+        if not released(where, project, tag):
+            errors.append(f"{name}: its src or installed fields are not {tag}'s (or no such "
+                          f"tag): release {name} first")
             continue
-        other, version, _ = members[needed]
-        tag, src = f"{other.name}-v{version}", other / "src"
-        if not src.is_dir():
-            errors.append(f"{src}: no such folder, so no source to compare with {tag}")
-        elif not unchanged_since(tag, src):
-            errors.append(f"{src} is not {tag}'s (or no such tag): release {other.name} first")
-        else:
-            try:
-                if not on_index(needed, version):
-                    errors.append(f"{needed} {version} is not on {INDEX}, or only yanked")
-            except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as error:
-                errors.append(f"{INDEX}, asked for {needed}: {error!r}")
-        floors = [Version(s.version) for s in req.specifier if s.operator == ">="]
-        if not req.specifier.contains(version):
-            errors.append(f"{folder.name} requires {req}, not {other.name} {version}: widen it")
-        elif not any(floor >= version for floor in floors):
-            errors.append(f"{folder.name} requires {req}: raise its floor to {version}")
+        try:
+            if not on_index(name, version_of(name)):
+                errors.append(f"{name} {version_of(name)} is not on {INDEX}, or only yanked")
+        except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as error:
+            errors.append(f"{INDEX}, asked for {name}: {error!r}")
+    for name in [this, *closure]:
+        for needed, req in needs(name):
+            version = version_of(needed)
+            floors = [Version(s.version) for s in req.specifier if s.operator == ">="]
+            if not req.specifier.contains(version):
+                errors.append(f"{name} requires {req}, not {needed} {version}: widen it")
+            elif not any(floor >= version for floor in floors):
+                errors.append(f"{name} requires {req}: raise its floor to {version}")
     sys.exit("\n".join(f"error: {e}" for e in errors) or None)
     EOF
     fi
