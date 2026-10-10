@@ -265,6 +265,36 @@ jobs:
           git remote add origin "$RUNNER_TEMP/origin.git"
           run git push --quiet origin main
           if [ ${{ matrix.kind }} = workspace ]; then
+            # the index the release asks for the library's (RELEASE_INDEX_URL): a static Simple
+            # API, its JSON written as each release would be published
+            index="$RUNNER_TEMP/index"
+            mkdir -p "$index/simple"
+            python3 -m http.server 8766 --bind 127.0.0.1 --directory "$index" > /dev/null 2>&1 &
+            server=$!
+            trap 'kill "$server"' EXIT
+            export RELEASE_INDEX_URL=http://127.0.0.1:8766/simple/
+            published() { # published <version>...: demo-core's wheels for those, on the index
+              local files=() version
+              for version in "$@"; do
+                files+=("{\"filename\":\"demo_core-$version-py3-none-any.whl\",\"yanked\":false}")
+              done
+              mkdir -p "$index/simple/demo-core"
+              printf '{"meta":{"api-version":"1.1"},"name":"demo-core","files":[%s]}' \
+                "$(IFS=,; echo "${files[*]}")" > "$index/simple/demo-core/index.html"
+            }
+            refused() { # refused <reason> <args>...: just release <args> refused, for that reason
+              local reason=$1 out
+              shift
+              if out=$(run just release "$@" 2>&1); then
+                echo "::error::just release $* was not refused" >&2
+                exit 1
+              fi
+              if ! grep -q -- "$reason" <<< "$out"; then
+                echo "::error::just release $* was refused, but not for '$reason':" >&2
+                echo "$out" >&2
+                exit 1
+              fi
+            }
             echo "change" >> packages/demo-core/README.md
             run git commit --quiet -am "feat(core): a library feature"
             run git push --quiet origin main
@@ -272,6 +302,8 @@ jobs:
             echo "change" >> packages/demo/README.md
             run git commit --quiet -am "fix(cli): a command-line fix"
             run git push --quiet origin main
+            refused "demo-core 0.1.0 is not on" demo patch
+            published 0.1.0
             run just release demo patch
             echo "change" >> packages/demo-core/README.md
             run git commit --quiet -am "feat(core)!: a breaking change"
@@ -280,10 +312,17 @@ jobs:
             test "$(git -C "$RUNNER_TEMP/origin.git" tag | tr '\n' ' ')" = "demo-core-v0.1.0 demo-core-v0.2.0 demo-v0.1.0 "
             grep -q '^version = "0.2.0"' packages/demo-core/pyproject.toml
             grep -q '^## \[0.2.0\](https://github.com/jane/demo/compare/demo-core-v0.1.0..demo-core-v0.2.0)' packages/demo-core/CHANGELOG.md
-            if run just release demo patch; then
-              echo "::error::a release with nothing new was not refused" >&2
-              exit 1
-            fi
+            refused "nothing to release" demo patch
+            published 0.1.0 0.2.0
+            echo "change" >> packages/demo/README.md
+            run git commit --quiet -am "fix(cli): another fix"
+            run git push --quiet origin main
+            refused "raise its floor to 0.2.0" demo patch
+            # in the library's src, but nothing the hooks lint
+            echo >> packages/demo-core/src/demo_core/py.typed
+            run git commit --quiet -am "fix(core): a library fix"
+            run git push --quiet origin main
+            refused "release demo-core first" demo patch
           else
             run git commit --quiet --allow-empty -m "feat: greet louder"
             run git push --quiet origin main

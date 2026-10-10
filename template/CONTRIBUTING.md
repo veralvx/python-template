@@ -117,7 +117,10 @@ just release <package> <major|minor|patch>
 The tag is `<package>-v<version>`. Release `{{project-name}}-core` first when `{{project-name}}`
 needs its new version, and raise `{{project-name}}`'s requirement on it to that version: uv and
 the flake build against the workspace's copy, so nothing here sees a stale floor -- PyPI's users
-would.
+would. The release holds to this: it refuses a member whose requirement on another excludes or sits
+below that member's release, a release not yet on PyPI (its `publish.yml` run failed, or every file
+yanked), a member whose `src` changed since its tag, and a library's version its dependent's range
+excludes. It asks PyPI's Simple API; `RELEASE_INDEX_URL` names another index.
 {%- else -%}
 From a clean `main` equal to `origin/main`, CI green on it:
 

@@ -170,9 +170,11 @@ There is no `CHANGELOG.md` until the first release writes one: git-cliff generat
 commits, never a hand; a workspace member's from the commits touching its folder.
 `just release [package] <major|minor|patch>` shows every step in order, none hidden in a hook or
 another tool's config, and runs no tests -- it releases `origin/main`, which CI checks: it refuses a
-dirty tree, another branch, a `main` that is not `origin/main` or a release with nothing in it; sets
-the version (`uv version --bump`, the lock with it -- the first release is the declared version,
-whatever the level); writes the changelog; commits; tags `v<version>` (a member's
+dirty tree, another branch, a `main` that is not `origin/main` or a release with nothing in it; in a
+workspace (step 4), a member ahead of another it requires -- that one's `src` changed since its
+release, the release not on PyPI, or below this one's floor -- and a library version its dependent's
+range excludes; sets the version (`uv version --bump`, the lock with it -- the first release is the
+declared version, whatever the level); writes the changelog; commits; tags `v<version>` (a member's
 `<package>-v<version>`); pushes the commit and the tag atomically. If a step fails before the
 commit -- a git hook refusing it, say -- it puts the files back.
 
@@ -234,7 +236,9 @@ Also confirmed by running it:
   the breaking change first and a compare link; an empty third is refused. A workspace releases
   `<name>-core` (`v0.1.0`, then `v0.2.0` after a breaking change) and `<name>` on their own, each
   changelog from its folder's commits alone; a release naming no package, or one that is not a
-  member, is refused. Each tag, at its own commit, is read back by `.github/package-tag.sh`
+  member, is refused; so is the command released before the library is on the index (a local one,
+  `RELEASE_INDEX_URL`), with a floor below the library's release, or with the library's `src`
+  changed since its tag. Each tag, at its own commit, is read back by `.github/package-tag.sh`
   (package, folder, version -- a dev version's too) and `.github/release-notes.sh`, which refuse a
   version the package does not declare or the changelog does not head. A push refused after the
   release commit names the commands that finish it.

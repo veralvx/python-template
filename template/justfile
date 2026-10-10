@@ -184,6 +184,100 @@ release *args:
         exit 1
     fi
 
+    # 4. In a workspace, its members' requirements on each other, which uv's lock ignores (it takes
+    #    a member from the workspace): each member requiring this one admits its new version; for
+    #    each member this one requires, a release -- its src the latest tag's, on the index (a file
+    #    not yanked: the Simple API's JSON, PEP 691), within this one's range, the floor no lower
+    #    -- else PyPI's users get a wheel that installs nowhere, or one paired with a release that
+    #    lacks what it imports. RELEASE_INDEX_URL names another index (publish.yml's, if changed).
+    if [ -n "$package" ]; then
+        RELEASE_INDEX_URL="${RELEASE_INDEX_URL:-https://pypi.org/simple/}" \
+            uv run --locked --isolated --only-group release python - "$package" "$version" <<'EOF'
+    import json
+    import os
+    import subprocess
+    import sys
+    import tomllib
+    import urllib.error
+    import urllib.request
+    from pathlib import Path
+
+    from packaging.requirements import Requirement
+    from packaging.utils import canonicalize_name, parse_sdist_filename, parse_wheel_filename
+    from packaging.version import Version
+
+    INDEX = os.environ["RELEASE_INDEX_URL"].rstrip("/")
+
+
+    def unchanged_since(tag, path):
+        # git diff's 0: as the tag left it (1: changed; 128: no such tag)
+        command = ["git", "diff", "--quiet", tag, "HEAD", "--", path]
+        return subprocess.run(command, check=False, stderr=subprocess.DEVNULL).returncode == 0
+
+
+    def on_index(name, version):
+        accept = {"Accept": "application/vnd.pypi.simple.v1+json"}
+        request = urllib.request.Request(f"{INDEX}/{name}/", headers=accept)
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                files = json.load(response)["files"]
+        except urllib.error.HTTPError as error:
+            if error.code == 404:  # no such project
+                return False
+            raise
+        for file in files:
+            filename = file["filename"]
+            parse = parse_wheel_filename if filename.endswith(".whl") else parse_sdist_filename
+            try:
+                found = parse(filename)[1]
+            except ValueError:  # neither a wheel nor an sdist (an egg): never pip's here
+                continue
+            if found == version and not file["yanked"]:
+                return True
+        return False
+
+
+    # each member by its project name: its folder (its tags' prefix), version and requirements
+    members = {}
+    for manifest in sorted(Path("packages").glob("*/pyproject.toml")):
+        project = tomllib.loads(manifest.read_text(encoding="utf-8"))["project"]
+        members[canonicalize_name(project["name"])] = (
+            manifest.parent,
+            Version(project["version"]),
+            [Requirement(line) for line in project.get("dependencies", [])],
+        )
+    folder, upcoming = Path("packages", sys.argv[1]), Version(sys.argv[2])
+    this = next(name for name, (where, _, _) in members.items() if where == folder)
+    errors = []
+    for name, (_, _, requires) in members.items():
+        for req in requires:
+            if canonicalize_name(req.name) == this and not req.specifier.contains(upcoming):
+                errors.append(f"{name} requires {req}, not {upcoming}: widen it first")
+    for req in members[this][2]:
+        needed = canonicalize_name(req.name)
+        if needed not in members:
+            continue
+        other, version, _ = members[needed]
+        tag, src = f"{other.name}-v{version}", other / "src"
+        if not src.is_dir():
+            errors.append(f"{src}: no such folder, so no source to compare with {tag}")
+        elif not unchanged_since(tag, src):
+            errors.append(f"{src} is not {tag}'s (or no such tag): release {other.name} first")
+        else:
+            try:
+                if not on_index(needed, version):
+                    errors.append(f"{needed} {version} is not on {INDEX}, or only yanked")
+            except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as error:
+                errors.append(f"{INDEX}, asked for {needed}: {error!r}")
+        floors = [Version(s.version) for s in req.specifier if s.operator == ">="]
+        if not req.specifier.contains(version):
+            errors.append(f"{folder.name} requires {req}, not {other.name} {version}: widen it")
+        elif not any(floor >= version for floor in floors):
+            errors.append(f"{folder.name} requires {req}: raise its floor to {version}")
+    sys.exit("\n".join(f"error: {e}" for e in errors) or None)
+    EOF
+    fi
+
     # If anything below fails before the commit, put back what it changed: the manifest and the
     # lock from HEAD, and a changelog the first release created (HEAD's, not the index's: it may
     # be staged by then).
@@ -199,7 +293,7 @@ release *args:
     }
     trap restore ERR
 
-    # 4. The version, written (pyproject.toml and uv.lock); none at the first release
+    # 5. The version, written (pyproject.toml and uv.lock); none at the first release
     if [ "$bump" = true ]; then
         "${version_of[@]}" --bump "$level" --no-sync > /dev/null
     fi
@@ -208,10 +302,10 @@ release *args:
         echo "error: the version written is not $version" >&2; restore; exit 1
     fi
 
-    # 5. The changelog, the release's section on top
+    # 6. The changelog, the release's section on top
     just changelog ${package:+"$package"} --tag "$tag" --output "$changelog"
 
-    # 6. Commit, then change the trap: a refused commit (a git hook) still restores the files, but
+    # 7. Commit, then change the trap: a refused commit (a git hook) still restores the files, but
     #    once committed, a failure is finished by hand -- a re-run would bump again
     git add "${manifests[@]}" uv.lock "$changelog"
     git commit -m "chore(release): $tag"
@@ -221,6 +315,6 @@ release *args:
     trap finish ERR
     git tag -a "$tag" -m "Release $tag"
 
-    # 7. The commit and the tag together, both or neither
+    # 8. The commit and the tag together, both or neither
     git push --atomic origin main "$tag"
     echo "Released $tag: publish.yml takes it from here."

@@ -93,8 +93,14 @@ dev = [
 # `just audit`'s and security.yml's: pip-audit over the exported lock, in an environment of its
 # own -- not the dev group, so not in `uv sync`'s
 audit = ["pip-audit==2.10.0"]
-# `just changelog`'s and `just release`'s: git-cliff, run as `audit` is
-release = ["git-cliff==2.13.1"]
+# `just changelog`'s and `just release`'s: git-cliff, run as `audit` is{% if project_kind == "workspace" %}; packaging, the
+# release's check of the members' requirements{% endif %}
+release = [
+    "git-cliff==2.13.1",
+{%- if project_kind == "workspace" %}
+    "packaging==26.1",
+{%- endif %}
+]
 
 [tool.uv]
 # uv too is nixpkgs' (the `pins` check): its resolver writes and checks the lock, and setup-uv
