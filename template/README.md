@@ -128,9 +128,11 @@ assert greeting("Ada") == "Hello, Ada!"
 
 Each member is its own distribution, with its own version, changelog and tag
 (`<package>-v<version>`): `just release <package> <level>`. A new member is a folder under
-`packages/` with its pyproject.toml, README.md and copies of the licence files (its sdist holds
-its folder only); the root's tests and pytest's, ruff's, basedpyright's and coverage's settings
-name the members' folders and import names, so add it there too.
+`packages/` with its pyproject.toml, README.md, `src/` and copies of the licence files (its sdist
+holds its folder only); the root's ruff, basedpyright, pytest and coverage settings name the
+members' folders and import names, so add it there too (`tests/test_workspace.py` checks it). A
+requirement on another member needs `[tool.uv.sources] <name> = { workspace = true }` too: without
+it, uv refuses to lock.
 
 {% endif -%}
 ## Development
