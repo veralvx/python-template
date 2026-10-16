@@ -2,7 +2,9 @@
 # installer), each from its own pyproject.toml: name, version, description, licence, homepage,
 # the Python it needs, its dependencies, its command. Nothing here is project-specific: a single
 # package is the root's [project]; a workspace's members are [tool.uv.workspace]'s `members`
-# (each a folder, or a `folder/*` glob of them).
+# (each a folder, or a `folder/*` glob of them). Each is a Python module, so a Python
+# environment takes it; the command is its package as an application (toPythonApplication: the
+# same derivation).
 #
 # A dependency that is a member is that member's package; any other is nixpkgs' Python package
 # of its normalised name (python3Packages.<name>). One nixpkgs names otherwise, or one with
@@ -53,27 +55,77 @@ let
   overrides = { };
   # extras, a marker, a URL: what a name alone cannot honour
   plain = requirement: builtins.match ".*[][;@].*" requirement == null;
+  # hatchling's license-files when [project] gives none (its metadata/core.py)
+  hatchlingLicenceFiles = [
+    "LICEN[CS]E*"
+    "COPYING*"
+    "NOTICE*"
+    "AUTHORS*"
+  ];
+  # a file-name glob as a regex: `*`, `?`, `[...]` and `[!...]`, the rest literal
+  globRegex =
+    glob: lib.replaceStrings [ "\\*" "\\?" "\\[!" "\\[" ] [ ".*" "." "[^" "[" ] (lib.escapeRegex glob);
 
-  manifests = map (folder: {
-    inherit folder;
-    project = (lib.importTOML (folder + "/pyproject.toml")).project;
-  }) folders;
+  manifests = map (
+    folder:
+    let
+      manifest = lib.importTOML (folder + "/pyproject.toml");
+    in
+    {
+      inherit folder;
+      inherit (manifest) project;
+      tool = manifest.tool or { };
+    }
+  ) folders;
   memberNames = map (m: normalise m.project.name) manifests;
 
   build =
     self:
-    { folder, project }:
+    { folder, project, ... }:
     let
       # requires-python, a floor alone (">=3.13"): an older interpreter refused at evaluation
-      floor = builtins.match ">=([0-9.]+)" project.requires-python;
-      oldest = lib.throwIf (floor == null) "${project.name}: requires-python is no floor alone" (
-        lib.head floor
-      );
-      # the SPDX expression's identifiers, its operators and parentheses aside
+      floor =
+        let
+          matched = builtins.match ">=([0-9.]+)" project.requires-python;
+        in
+        lib.throwIf (matched == null) "${project.name}: requires-python is no floor alone" (
+          lib.head matched
+        );
+      # the SPDX expression's licence identifiers: its operators, parentheses and `WITH`
+      # exceptions aside
       licences = lib.subtractLists [ "" "AND" "OR" ] (
-        lib.filter lib.isString (builtins.split "[ ()]+" project.license)
+        lib.filter lib.isString (builtins.split "[ ()]+|WITH [^ ()]+" project.license)
       );
       scripts = project.scripts or { };
+      # what hatchling reads besides the code: the readme, and the files license-files' globs
+      # match at the package's top level, as hatchling globs them (a `*` here takes dotfiles too:
+      # more in the source, never less) -- a file missing from the source is left out of the
+      # wheel without a word. A symlink is refused: the source keeps it as a link, which no
+      # longer resolves there.
+      readme =
+        if lib.isString (project.readme or null) then project.readme else project.readme.file or null;
+      entries = lib.filterAttrs (_: type: type != "directory") (builtins.readDir folder);
+      matching =
+        glob:
+        lib.throwIf (lib.hasInfix "/" glob)
+          "${project.name}: license-files' ${glob} is below the package's top level, which alone is read here"
+          (
+            lib.filter (
+              name:
+              builtins.match (globRegex glob) name != null
+              &&
+                lib.throwIf (entries.${name} == "symlink")
+                  "${project.name}: ${name} is a symlink, which its source would keep unresolved: copy the file"
+                  true
+            ) (lib.attrNames entries)
+          );
+      # hatchling's legacy table form too: { globs = [ ... ]; } or { paths = [ ... ]; }
+      licenceGlobs =
+        let
+          declared = project.license-files or hatchlingLicenceFiles;
+        in
+        if lib.isAttrs declared then declared.globs or declared.paths or [ ] else declared;
+      licenceFiles = lib.concatMap matching licenceGlobs;
       dependency =
         requirement:
         let
@@ -90,31 +142,32 @@ let
             python3Packages.${name}
               or (throw "${project.name}: nixpkgs has no python3Packages.${name} for ${requirement}: give its packages in nix/packages.nix's overrides")
           ];
-      builder =
-        if scripts == { } then
-          python3Packages.buildPythonPackage
-        else
-          python3Packages.buildPythonApplication;
     in
-    builder {
+    python3Packages.buildPythonPackage {
       pname = project.name;
       inherit (project) version;
-      # what its wheel takes, and what hatchling reads to build it
       src = lib.fileset.toSource {
         root = folder;
-        fileset = lib.fileset.unions [
-          (folder + "/pyproject.toml")
-          (folder + "/README.md")
-          (folder + "/src")
-          (lib.fileset.fileFilter (file: lib.hasPrefix "LICENSE-" file.name) folder)
-        ];
+        fileset = lib.fileset.unions (
+          [
+            (folder + "/pyproject.toml")
+            (folder + "/src")
+          ]
+          ++ map (name: folder + "/${name}") (lib.optional (readme != null) readme ++ licenceFiles)
+        );
       };
-      disabled = python3Packages.pythonOlder oldest;
+      disabled = python3Packages.pythonOlder floor;
       pyproject = true;
       build-system = [ python3Packages.hatchling ];
       dependencies = lib.concatMap dependency (project.dependencies or [ ]);
       doCheck = false; # the tests run once, over every package: nix/checks.nix
       pythonImportsCheck = [ (lib.replaceStrings [ "-" ] [ "_" ] project.name) ];
+      # nix/image.nix's labels: the SPDX expression as written (meta.license holds its
+      # identifiers alone), and the repository (a member's homepage is its folder)
+      passthru = {
+        spdxLicense = project.license;
+        repository = project.urls.Repository;
+      };
       meta = {
         inherit (project) description;
         homepage = project.urls.Homepage;
@@ -132,16 +185,24 @@ let
       }) manifests
     )
   );
-  # the command when there is one -- a workspace's, its one member with scripts -- else the root
-  commands = lib.filter (p: p.meta ? mainProgram) (lib.attrValues packages);
+  # the main package: a single package's own; a workspace's, its one member marked so in its own
+  # [tool] table -- `[tool.<its name>] main = true` (tests/test_workspace.py holds it to one)
+  marked = lib.filter (m: (m.tool.${m.project.name} or { }).main or false == true) manifests;
+  main =
+    if rootManifest ? project then
+      rootManifest.project.name
+    else if lib.length marked == 1 then
+      (lib.head marked).project.name
+    else
+      throw "pyproject.toml: one workspace member is the main package, marked `[tool.<its name>] main = true` in its pyproject.toml (${toString (lib.length marked)} marked)";
+  mainPackage = packages.${normalise main};
 in
 {
   inherit packages;
+  # its command, when it has one, as an application (the same derivation)
   default =
-    if commands != [ ] then
-      lib.head commands
+    if mainPackage.meta ? mainProgram then
+      python3Packages.toPythonApplication mainPackage
     else
-      packages.${
-        normalise (if rootManifest ? project then rootManifest.project.name else lib.head memberNames)
-      };
+      mainPackage;
 }

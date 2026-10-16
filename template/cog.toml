@@ -1,5 +1,5 @@
 # cocogitto checks the commits alone (`just cog`, the commit-msg and pre-push hooks, CI): `just
-# release` sets the version, git-cliff writes the changelog (cliff.toml).
+# release` cuts the release, git-cliff writes the changelog (cliff.toml).
 
 # every commit, not from the latest tag: with no tag, cog stops "unable to get any tag"
 from_latest_tag = false

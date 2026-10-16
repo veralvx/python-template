@@ -13,10 +13,18 @@ default:
 sync:
     uv sync --locked
 
-[doc("Format the code, the Markdown and the TOML (modifies files)")]
+# Every formatter a check holds the files to: ruff's import order (a lint rule, which `ruff format`
+# leaves) and its format, then the rest. The Nix last, through `nix fmt` (flake.nix's formatter:
+# nixfmt, and shfmt and just's own again): without Nix, it stops there, the rest formatted.
+[doc("Format the code, the shell scripts, the justfile, the Markdown and the TOML, then the Nix (modifies files)")]
 format:
+    uv run --locked ruff check --select I --fix
     uv run --locked ruff format
+    just shfmt --write
+    just shfmt-recipes
+    just --fmt --unstable
     dprint fmt
+    nix fmt
 
 [doc("The code's format, checked")]
 format-check:
@@ -59,6 +67,11 @@ dprint-update:
 cog:
     cog check
 
+# actionlint runs shellcheck on each `run:` script too, when it is on PATH.
+[doc("The workflows linted (actionlint)")]
+actionlint:
+    actionlint
+
 [doc("pip-audit over the lock, exported")]
 audit:
     #!/usr/bin/env bash
@@ -71,15 +84,166 @@ audit:
     uv run --locked --isolated --only-group audit \
         pip-audit --strict --disable-pip --require-hashes -r "$requirements"
 
-[doc("The flake: every system evaluated, this one's checks built")]
+# shellcheck and shfmt over every shell script git does not ignore -- shfmt finds them, by extension
+# or shebang, and formats them as .editorconfig says -- and over this justfile's shell script
+# recipes (a sh, bash, dash or ksh shebang), which no file holds: each taken from `just --dump`,
+# the names the justfile exports declared before it for shellcheck (their values are just's
+# expressions, not shell's), formatted in the justfile's own style (4 spaces). A script recipe
+# takes its values as arguments, never as `{{ }}` spliced into its text, and names its shell in a
+# shebang, not a `[script]` attribute (whose body holds none to read): both are refused here.
+[doc("The shell: shellcheck and shfmt over the scripts, the git hooks and the justfile's script recipes")]
+shell-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' EXIT
+    failed=0
+    just shfmt --diff || failed=1
+    scripts=()
+    while IFS= read -r file; do
+        scripts+=("$file")
+    done < <(just shfmt --find)
+    if [ "${#scripts[@]}" -gt 0 ]; then
+        shellcheck "${scripts[@]}" || failed=1
+    fi
+    dump="$(just --dump --dump-format json)"
+    while IFS= read -r recipe; do
+        if jq -e --arg recipe "$recipe" '.recipes[$recipe].attributes | any(type == "object" and has("script"))' <<< "$dump" > /dev/null; then
+            echo "error: $recipe: a [script] recipe -- name its shell in a shebang instead" >&2
+            failed=1
+            continue
+        fi
+        # its shebang's program, or the one `env` runs, past env's options (`-S`)
+        read -r -a shebang < <(jq -r --arg recipe "$recipe" '.recipes[$recipe].body[0][0] | ltrimstr("#!")' <<< "$dump")
+        program="${shebang[0]-}"
+        program="${program##*/}"
+        if [ "$program" = env ]; then
+            program=""
+            for word in "${shebang[@]:1}"; do
+                if [[ $word != -* ]]; then
+                    program="$word"
+                    break
+                fi
+            done
+        fi
+        case "$program" in
+            sh | bash | dash | ksh) ;;
+            *) continue ;;
+        esac
+        jq -r --arg recipe "$recipe" '
+            .recipes[$recipe].body
+            | map(map(if type == "string" then . else error("\($recipe): an interpolation in a script recipe: pass the value as an argument") end) | join(""))
+            | join("\n")
+        ' <<< "$dump" > "$work/$recipe" || {
+            failed=1
+            continue
+        }
+        # after the shebang, the variables just exports to it: the `export`ed assignments and
+        # `$`-parameters, or every one under `set export`
+        {
+            head -n 1 "$work/$recipe"
+            jq -r --arg recipe "$recipe" '
+                .settings.export as $all
+                | (.assignments[], .recipes[$recipe].parameters[])
+                | select($all or .export)
+                | "export \(.name)="
+            ' <<< "$dump"
+            tail -n +2 "$work/$recipe"
+        } > "$work/$recipe.with-exports"
+        (cd "$work" && shellcheck --shell="$program" "$recipe.with-exports") || failed=1
+        (cd "$work" && shfmt --diff --indent 4 --case-indent --space-redirects --binary-next-line "$recipe") || failed=1
+    done < <(jq -r '.recipes | to_entries[] | select(.value.shebang) | .key' <<< "$dump")
+    exit "$failed"
+
+# shfmt over every shell script git does not ignore and that exists (shfmt finds them, by extension
+# or shebang): `just shfmt --find` lists them, `--diff` checks, `--write` formats.
+[positional-arguments]
+[private]
+shfmt mode:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # a process substitution's failure goes unseen (set -e): outside a repository, ls-files' would
+    git rev-parse --is-inside-work-tree > /dev/null
+    files=()
+    while IFS= read -r -d '' file; do
+        if [ -f "$file" ]; then files+=("$file"); fi
+    done < <(git ls-files -z --cached --others --exclude-standard)
+    # with no file, shfmt would read stdin; a command substitution, so a failing shfmt stops here
+    found=""
+    if [ "${#files[@]}" -gt 0 ]; then found="$(shfmt --find "${files[@]}")"; fi
+    if [ -z "$found" ]; then exit 0; fi
+    scripts=()
+    while IFS= read -r file; do
+        scripts+=("$file")
+    done <<< "$found"
+    case "$1" in
+        --find) printf '%s\n' "${scripts[@]}" ;;
+        *) shfmt "$1" "${scripts[@]}" ;;
+    esac
+
+# The justfile's own script recipes formatted as `just shell-check` holds them: each sh, bash, dash
+# or ksh recipe taken from `just --dump`, through shfmt in the justfile's style, and put back in
+# its place, 4 spaces in. A `[script]` recipe, or one with a `{{ }}` in it, is shell-check's to
+# refuse, and is left as it is.
+[private]
+shfmt-recipes:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' EXIT
+    dump="$(just --dump --dump-format json)"
+    # the shebang's program, or the one `env` runs, past env's options (`-S`), as shell-check reads it
+    names="$(jq -r '
+        .recipes[]
+        | select(.shebang)
+        | select(.attributes | any(type == "object" and has("script")) | not)
+        | select(all(.body[][]; type == "string"))
+        | select(
+            (.body[0][0] | ltrimstr("#!") | split(" ") | map(select(. != ""))) as $words
+            | ($words[0] | split("/") | last) as $program
+            | if $program == "env" then [$words[1:][] | select(startswith("-") | not)][0] else $program end
+            | IN("sh", "bash", "dash", "ksh")
+        )
+        | .name
+    ' <<< "$dump")"
+    if [ -z "$names" ]; then exit 0; fi
+    while IFS= read -r recipe; do
+        jq -r --arg recipe "$recipe" '.recipes[$recipe].body | map(join("")) | join("\n")' <<< "$dump" > "$work/body"
+        shfmt --indent 4 --case-indent --space-redirects --binary-next-line "$work/body" > "$work/formatted"
+        if cmp -s "$work/body" "$work/formatted"; then continue; fi
+        # the recipe's line, then its body in place of the old: every line to the next at the
+        # margin, less the blank lines before that one
+        awk -v recipe="$recipe" -v formatted="$work/formatted" '
+            function body(line) {
+                while ((getline line < formatted) > 0) print (line == "" ? "" : "    " line)
+                close(formatted)
+            }
+            state == 1 && $0 == "" { blanks++; next }
+            state == 1 && /^[ \t]/ { blanks = 0; next }
+            state == 1 {
+                body()
+                for (; blanks > 0; blanks--) print ""
+                state = 2
+            }
+            state == 0 && $0 ~ ("^@?" recipe "([ \t][^:]*)?:") && $0 !~ ("^" recipe "[ \t]*:=") { state = 1 }
+            { print }
+            END { if (state == 1) body() }
+        ' justfile > "$work/justfile"
+        cat "$work/justfile" > justfile
+    done <<< "$names"
+
+# `nix fmt -- --ci` formats -- treefmt has no check-only mode -- and fails if that changed a file:
+# look at the change, then commit it. The flake's `format` check is the same verdict, on a copy.
+[doc("The flake: its formatter's verdict (`nix fmt`), every system evaluated, this one's checks built")]
 nix:
+    nix fmt -- --ci
     nix flake check --no-build --all-systems
     nix flake check
 
 # `nix` last: the slowest, and the one a machine without Nix cannot run -- every other has passed
 # by then. The flake sees git's files only: a new file is invisible to it until `git add`ed.
 [doc("Every check, the flake's last")]
-checks: lock-check ruff-checks static vulture pytest dprint-check cog audit nix
+checks: lock-check ruff-checks shell-check actionlint static vulture pytest dprint-check cog audit nix
 
 [doc("Every package's sdist and wheel into dist/, as publish.yml builds them (--no-sources)")]
 build:
@@ -87,7 +251,7 @@ build:
 
 # Opt-in, as every git hook is: a clone never installs one, so CI stays the gate.
 # `git config --unset core.hooksPath` turns them off again.
-[doc("Use .githooks: the lock, ruff and dprint before a commit; Conventional Commits for the message and before a push")]
+[doc("Use .githooks: the lock, ruff, the shell, the workflows and dprint before a commit; Conventional Commits for the message and before a push")]
 install-hooks:
     git config core.hooksPath .githooks
 
@@ -107,13 +271,23 @@ changelog *args:
         package="${1:?in a workspace, the package comes first: just changelog <package> ...}"
         shift
         manifest="packages/$package/pyproject.toml"
-        [ -f "$manifest" ] || { echo "error: no workspace member $package (packages/$package)" >&2; exit 1; }
+        [ -f "$manifest" ] || {
+            echo "error: no workspace member $package (packages/$package)" >&2
+            exit 1
+        }
         scope=(--include-path "packages/$package/**" --tag-pattern "^${package//./\\.}-v[0-9]+(\\.|$)")
     fi
     url="$(sed -n 's/^Repository[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest")"
     case "$url" in
-        https://github.com/*/*) repo="${url#https://github.com/}"; repo="${repo%.git}"; repo="${repo%/}" ;;
-        *) echo "error: $manifest's Repository is not a GitHub URL (got '$url')" >&2; exit 1 ;;
+        https://github.com/*/*)
+            repo="${url#https://github.com/}"
+            repo="${repo%.git}"
+            repo="${repo%/}"
+            ;;
+        *)
+            echo "error: $manifest's Repository is not a GitHub URL (got '$url')" >&2
+            exit 1
+            ;;
     esac
     uv run --locked --isolated --only-group release \
         git-cliff --offline --config cliff.toml --github-repo "$repo" "${scope[@]}" "$@"
@@ -121,9 +295,9 @@ changelog *args:
 # Every step here, in order -- nothing in a hook or another tool's config. The version is uv's
 # (`uv version --bump`); the first release is the version pyproject.toml declares, whatever the
 # level. Single package: `just release minor`, tag v0.2.0. Workspace: `just release <package>
-# minor`, tag <package>-v0.2.0. The tag publishes (publish.yml) and makes the GitHub release
-# (release.yml).
-[doc("Release: just release [package] <major|minor|patch> -- checks, version, changelog, commit, tag, push")]
+# minor`, tag <package>-v0.2.0. The tag publishes to PyPI and makes the GitHub release, of the
+# same files (publish.yml). No tests here: what is released is origin's main, which CI checks.
+[doc("Release: just release [package] <major|minor|patch> -- version, changelog, commit, tag")]
 [positional-arguments]
 release *args:
     #!/usr/bin/env bash
@@ -131,34 +305,58 @@ release *args:
 
     # 0. The arguments -- passed as $1 and $2, never spliced into this script's text
     if grep -q '^\[project\]' pyproject.toml; then
-        [ $# -eq 1 ] || { echo "usage: just release <major|minor|patch>" >&2; exit 1; }
-        level="$1"; package=""; folder="."; prefix="v"
+        [ $# -eq 1 ] || {
+            echo "usage: just release <major|minor|patch>" >&2
+            exit 1
+        }
+        level="$1"
+        package=""
+        folder="."
+        prefix="v"
         manifests=(pyproject.toml)
     else
-        [ $# -eq 2 ] || { echo "usage: just release <package> <major|minor|patch>" >&2; exit 1; }
-        package="$1"; level="$2"; folder="packages/$package"; prefix="$package-v"
-        [ -f "$folder/pyproject.toml" ] || { echo "error: no workspace member $package ($folder)" >&2; exit 1; }
+        [ $# -eq 2 ] || {
+            echo "usage: just release <package> <major|minor|patch>" >&2
+            exit 1
+        }
+        package="$1"
+        level="$2"
+        folder="packages/$package"
+        prefix="$package-v"
+        [ -f "$folder/pyproject.toml" ] || {
+            echo "error: no workspace member $package ($folder)" >&2
+            exit 1
+        }
         manifests=("$folder/pyproject.toml")
     fi
     case "$level" in
-        major|minor|patch) ;;
-        *) echo "error: the level must be major, minor or patch (got '$level')" >&2; exit 1 ;;
+        major | minor | patch) ;;
+        *)
+            echo "error: the level must be major, minor or patch (got '$level')" >&2
+            exit 1
+            ;;
     esac
     version_of=(uv version --short ${package:+--package "$package"})
     changelog="$folder/CHANGELOG.md"
 
-    # 1. From a clean main, up to date with origin
+    # 1. From a clean main that is origin's -- pushed, so the commit released is the one CI ran on
     if [ -n "$(git status --porcelain)" ]; then
-        echo "error: the working tree is not clean: commit or stash first" >&2; exit 1
+        echo "error: the working tree is not clean: commit or stash first" >&2
+        exit 1
     fi
     if [ "$(git branch --show-current)" != main ]; then
-        echo "error: a release is cut from main" >&2; exit 1
+        echo "error: a release is cut from main" >&2
+        exit 1
     fi
     git fetch origin
     git rev-parse --quiet --verify origin/main > /dev/null \
-        || { echo "error: origin has no main: push it first" >&2; exit 1; }
-    if [ "$(git rev-list --count HEAD..origin/main)" -ne 0 ]; then
-        echo "error: main is behind origin/main: pull first" >&2; exit 1
+        || {
+            echo "error: origin has no main: push it first" >&2
+            exit 1
+        }
+    if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+        echo "error: main is not origin/main: push (and let CI pass) or pull first" >&2
+        exit 1
     fi
 
     # 2. The version: the declared one at the first release (no tag yet), else uv's bump
@@ -166,13 +364,16 @@ release *args:
     # the package's tags, as `just changelog` matches them: the prefix, then a version
     released="$(git tag --list "${prefix}[0-9]*" | grep -E "^${prefix//./\\.}[0-9]+(\\.|$)" || true)"
     if [ -z "$released" ]; then
-        version="$declared"; bump=false
+        version="$declared"
+        bump=false
     else
-        version="$("${version_of[@]}" --bump "$level" --dry-run)"; bump=true
+        version="$("${version_of[@]}" --bump "$level" --dry-run)"
+        bump=true
     fi
     tag="$prefix$version"
     if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
-        echo "error: $tag is already tagged" >&2; exit 1
+        echo "error: $tag is already tagged" >&2
+        exit 1
     fi
 
     # 3. Something to release: a commit since the last tag that enters the changelog
@@ -184,8 +385,131 @@ release *args:
         exit 1
     fi
 
-    # 4. Every check CI runs, before anything is written
-    just checks
+    # 4. In a workspace, its members' requirements on each other, which uv's lock ignores (it takes
+    #    a member from the workspace). Each member requiring this one admits its new version. Each
+    #    member this one needs, directly or through another, is released as the workspace holds
+    #    it -- its src and the fields an install reads (dependencies, scripts...) its latest tag's
+    #    -- and on the index (a file not yanked: the Simple API's JSON, PEP 691); and every
+    #    requirement between them admits that release, its floor no lower: then PyPI's links are
+    #    the workspace's, and pip installs what was tested or newer, never an older one it keeps.
+    #    RELEASE_INDEX_URL names another index (publish.yml's, if changed).
+    if [ -n "$package" ]; then
+        RELEASE_INDEX_URL="${RELEASE_INDEX_URL:-https://pypi.org/simple/}" \
+            uv run --locked --isolated --only-group release python - "$package" "$version" << 'EOF'
+    import json
+    import os
+    import subprocess
+    import sys
+    import tomllib
+    import urllib.error
+    import urllib.request
+    from pathlib import Path
+
+    from packaging.requirements import Requirement
+    from packaging.utils import canonicalize_name, parse_sdist_filename, parse_wheel_filename
+    from packaging.version import Version
+
+    INDEX = os.environ["RELEASE_INDEX_URL"].rstrip("/")
+    # what pip reads of a release to install and run it; the rest (the readme, classifiers,
+    # [build-system]) changes no install
+    INSTALLED = ("dependencies", "optional-dependencies", "requires-python", "scripts",
+                 "gui-scripts", "entry-points")
+
+
+    def git(*args):
+        result = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+        return result.stdout if result.returncode == 0 else None  # None: no such tag or path
+
+
+    def released(folder, project, tag):
+        # its src, and its installed fields, as the tag left them
+        if git("diff", "--quiet", tag, "HEAD", "--", str(folder / "src")) is None:
+            return False
+        manifest = git("show", f"{tag}:{(folder / 'pyproject.toml').as_posix()}")
+        if manifest is None:
+            return False
+        then = tomllib.loads(manifest)["project"]
+        return all(then.get(field) == project.get(field) for field in INSTALLED)
+
+
+    def on_index(name, version):
+        accept = {"Accept": "application/vnd.pypi.simple.v1+json"}
+        request = urllib.request.Request(f"{INDEX}/{name}/", headers=accept)
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                files = json.load(response)["files"]
+        except urllib.error.HTTPError as error:
+            if error.code == 404:  # no such project
+                return False
+            raise
+        for file in files:
+            filename = file["filename"]
+            parse = parse_wheel_filename if filename.endswith(".whl") else parse_sdist_filename
+            try:
+                found = parse(filename)[1]
+            except ValueError:  # neither a wheel nor an sdist (an egg): never pip's here
+                continue
+            if found == version and not file["yanked"]:
+                return True
+        return False
+
+
+    # each member by its project name: its folder (its tags' prefix), its [project] table
+    members = {}
+    for manifest in sorted(Path("packages").glob("*/pyproject.toml")):
+        project = tomllib.loads(manifest.read_text(encoding="utf-8"))["project"]
+        members[canonicalize_name(project["name"])] = (manifest.parent, project)
+
+
+    def version_of(name):
+        return Version(members[name][1]["version"])
+
+
+    def needs(name):
+        # the members its requirements name, with those requirements
+        for line in members[name][1].get("dependencies", []):
+            req = Requirement(line)
+            if canonicalize_name(req.name) in members:
+                yield canonicalize_name(req.name), req
+
+
+    folder, upcoming = Path("packages", sys.argv[1]), Version(sys.argv[2])
+    this = next(name for name, (where, _) in members.items() if where == folder)
+    errors = []
+    for name in members:
+        for needed, req in needs(name):
+            if needed == this and not req.specifier.contains(upcoming):
+                errors.append(f"{name} requires {req}, not {upcoming}: widen it first")
+    # the members this one needs, directly or through another (its closure), in the order found
+    closure, pending = [], [this]
+    while pending:
+        for needed, _ in needs(pending.pop()):
+            if needed != this and needed not in closure:
+                closure.append(needed)
+                pending.append(needed)
+    for name in closure:
+        where, project = members[name]
+        tag = f"{where.name}-v{version_of(name)}"
+        if not released(where, project, tag):
+            errors.append(f"{name}: its src or installed fields are not {tag}'s (or no such "
+                          f"tag): release {name} first")
+            continue
+        try:
+            if not on_index(name, version_of(name)):
+                errors.append(f"{name} {version_of(name)} is not on {INDEX}, or only yanked")
+        except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as error:
+            errors.append(f"{INDEX}, asked for {name}: {error!r}")
+    for name in [this, *closure]:
+        for needed, req in needs(name):
+            version = version_of(needed)
+            floors = [Version(s.version) for s in req.specifier if s.operator == ">="]
+            if not req.specifier.contains(version):
+                errors.append(f"{name} requires {req}, not {needed} {version}: widen it")
+            elif not any(floor >= version for floor in floors):
+                errors.append(f"{name} requires {req}: raise its floor to {version}")
+    sys.exit("\n".join(f"error: {e}" for e in errors) or None)
+    EOF
+    fi
 
     # If anything below fails before the commit, put back what it changed: the manifest and the
     # lock from HEAD, and a changelog the first release created (HEAD's, not the index's: it may
@@ -208,7 +532,9 @@ release *args:
     fi
     if [ "$("${version_of[@]}")" != "$version" ]; then
         # an explicit exit runs no ERR trap: restore first
-        echo "error: the version written is not $version" >&2; restore; exit 1
+        echo "error: the version written is not $version" >&2
+        restore
+        exit 1
     fi
 
     # 6. The changelog, the release's section on top
@@ -226,4 +552,4 @@ release *args:
 
     # 8. The commit and the tag together, both or neither
     git push --atomic origin main "$tag"
-    echo "Released $tag: publish.yml and release.yml take it from here."
+    echo "Released $tag: publish.yml takes it from here."

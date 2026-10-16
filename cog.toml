@@ -1,0 +1,8 @@
+# cocogitto checks the commits alone (`just cog`, the commit-msg and pre-push hooks, CI): `just
+# release` cuts the release, git-cliff writes the changelog (cliff.toml).
+
+# every commit, not from the latest tag: with no tag, cog stops "unable to get any tag"
+from_latest_tag = false
+ignore_merge_commits = true
+ignore_fixup_commits = true
+disable_changelog = true

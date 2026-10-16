@@ -7,13 +7,15 @@ name: Template smoke test
 #
 #   render-check   tools/render-check.py: every prompt combination renders and parses; the
 #                  copies agree; the manifests describe their layout
-#   combinations   every kind x licence x email answer through the real cargo-generate: each
-#                  manifest parses, each licence file is where its choice puts it, dprint passes;
+#   combinations   every kind x licence x email answer through the real cargo-generate (no email,
+#                  no image): each manifest parses, each licence file is where its choice puts
+#                  it, the image's files are there or not, dprint passes;
 #                  a project name that is no Python import name refused
 #   generate       for each kind, in the generated flake's dev shell (its pinned tools): the
 #                  lock written, the git hooks refusing what CI would, `just checks` -- the
-#                  flake's checks built last -- and, but for lib (bin's recipe), real releases
-#                  against a bare remote, each tag read as release.yml and publish.yml read it
+#                  flake's checks built last, the image among them -- `just format` changing
+#                  nothing, the image run; and, but for lib (bin's recipe), real releases
+#                  against a bare remote, each tag read as publish.yml reads it
 
 on:
   push:
@@ -23,8 +25,9 @@ on:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC
   workflow_dispatch:
 
+# a pull request's newest run cancels its older ones; any other run, a group of its own
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -41,10 +44,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # nix-instantiate: every rendered Nix file parsed, the variants no other job generates too
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
       - name: Render every combination
         run: |
           python3 -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/pip" install --quiet python-liquid==2.3.4 pyyaml==6.0.3
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --requirement tools/requirements.txt
           "$RUNNER_TEMP/venv/bin/python" tools/render-check.py
 
   combinations:
@@ -55,7 +62,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install stable
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: stable
 
@@ -81,12 +88,24 @@ jobs:
               for email in jane@example.com ""; do
                 case "$licence" in MIT) python=3.12 ;; Apache-2.0) python=3.14 ;; *) python=3.13 ;; esac
                 name="c-$kind-$(tr -cd 'a-z0-9' <<< "${licence,,}")${email:+-e}"
+                # the image: its default with the email, declined without (a lib is never asked)
+                image=()
+                if [ "$kind" != lib ] && [ -z "$email" ]; then image=(-d container_image=false); fi
                 cargo generate --path "$GITHUB_WORKSPACE" template --name "$name" \
-                  --destination "$out" --silent -d project_kind="$kind" \
+                  --destination "$out" --silent -d project_kind="$kind" "${image[@]}" \
                   -d "description=Does a thing." -d "author_name=Jane Doe" \
                   -d "author_email=$email" -d github_username=jane \
                   -d "license=$licence" -d python_min="$python" -d "keywords=cli, demo"
                 dir="$out/$name"
+                want=absent
+                if [ "$kind" != lib ] && [ -n "$email" ]; then want=present; fi
+                for file in nix/image.nix .github/workflows/image.yml .github/image-registries.sh; do
+                  have=$([ -f "$dir/$file" ] && echo present || echo absent)
+                  if [ "$have" != "$want" ]; then
+                    echo "::error::$dir/$file is $have, expected $want" >&2
+                    exit 1
+                  fi
+                done
                 # each package's manifest parses, and holds its licence files where its choice puts them
                 packages=("$dir")
                 if [ "$kind" = workspace ]; then packages=("$dir"/packages/*); fi
@@ -143,7 +162,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install stable
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: stable
 
@@ -209,6 +228,26 @@ jobs:
         working-directory: ${{ runner.temp }}/generated/demo
         run: nix develop --command just checks
 
+      # every formatter, `nix fmt` last, on what generation wrote: nothing to change
+      - name: just format changes nothing
+        working-directory: ${{ runner.temp }}/generated/demo
+        run: |
+          nix develop --command just format
+          git diff --exit-code
+
+      # built by `just checks` (the flake's `image` check); here loaded and run as a user would
+      - name: The image runs
+        if: matrix.kind != 'lib'
+        working-directory: ${{ runner.temp }}/generated/demo
+        run: |
+          set -euo pipefail
+          stream="$(nix build --no-link --print-out-paths .#image.stream)"
+          "$stream" | docker load
+          test "$(docker run --rm demo:0.1.0 --version)" = "demo 0.1.0"
+          test "$(docker inspect --format '{{ .Config.User }}' demo:0.1.0)" = "65534:65534"
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' demo:0.1.0)" \
+            = "https://github.com/jane/demo"
+
       - name: The changelog, and the packages PyPI would get
         working-directory: ${{ runner.temp }}/generated/demo
         run: |
@@ -222,7 +261,7 @@ jobs:
           ls dist
 
       # the recipe that writes, commits, tags and pushes, against a bare remote: every step as
-      # a maintainer runs it, `just checks` included
+      # a maintainer runs it, each release after a push (it releases origin's main alone)
       - name: Releases
         if: matrix.kind != 'lib'
         working-directory: ${{ runner.temp }}/generated/demo
@@ -233,6 +272,36 @@ jobs:
           git remote add origin "$RUNNER_TEMP/origin.git"
           run git push --quiet origin main
           if [ ${{ matrix.kind }} = workspace ]; then
+            # the index the release asks for the library's (RELEASE_INDEX_URL): a static Simple
+            # API, its JSON written as each release would be published
+            index="$RUNNER_TEMP/index"
+            mkdir -p "$index/simple"
+            python3 -m http.server 8766 --bind 127.0.0.1 --directory "$index" > /dev/null 2>&1 &
+            server=$!
+            trap 'kill "$server"' EXIT
+            export RELEASE_INDEX_URL=http://127.0.0.1:8766/simple/
+            published() { # published <version>...: demo-core's wheels for those, on the index
+              local files=() version
+              for version in "$@"; do
+                files+=("{\"filename\":\"demo_core-$version-py3-none-any.whl\",\"yanked\":false}")
+              done
+              mkdir -p "$index/simple/demo-core"
+              printf '{"meta":{"api-version":"1.1"},"name":"demo-core","files":[%s]}' \
+                "$(IFS=,; echo "${files[*]}")" > "$index/simple/demo-core/index.html"
+            }
+            refused() { # refused <reason> <args>...: just release <args> refused, for that reason
+              local reason=$1 out
+              shift
+              if out=$(run just release "$@" 2>&1); then
+                echo "::error::just release $* was not refused" >&2
+                exit 1
+              fi
+              if ! grep -q -- "$reason" <<< "$out"; then
+                echo "::error::just release $* was refused, but not for '$reason':" >&2
+                echo "$out" >&2
+                exit 1
+              fi
+            }
             echo "change" >> packages/demo-core/README.md
             run git commit --quiet -am "feat(core): a library feature"
             run git push --quiet origin main
@@ -240,6 +309,8 @@ jobs:
             echo "change" >> packages/demo/README.md
             run git commit --quiet -am "fix(cli): a command-line fix"
             run git push --quiet origin main
+            refused "demo-core 0.1.0 is not on" demo patch
+            published 0.1.0
             run just release demo patch
             echo "change" >> packages/demo-core/README.md
             run git commit --quiet -am "feat(core)!: a breaking change"
@@ -248,10 +319,17 @@ jobs:
             test "$(git -C "$RUNNER_TEMP/origin.git" tag | tr '\n' ' ')" = "demo-core-v0.1.0 demo-core-v0.2.0 demo-v0.1.0 "
             grep -q '^version = "0.2.0"' packages/demo-core/pyproject.toml
             grep -q '^## \[0.2.0\](https://github.com/jane/demo/compare/demo-core-v0.1.0..demo-core-v0.2.0)' packages/demo-core/CHANGELOG.md
-            if run just release demo patch; then
-              echo "::error::a release with nothing new was not refused" >&2
-              exit 1
-            fi
+            refused "nothing to release" demo patch
+            published 0.1.0 0.2.0
+            echo "change" >> packages/demo/README.md
+            run git commit --quiet -am "fix(cli): another fix"
+            run git push --quiet origin main
+            refused "raise its floor to 0.2.0" demo patch
+            # in the library's src, but nothing the hooks lint
+            echo >> packages/demo-core/src/demo_core/py.typed
+            run git commit --quiet -am "fix(core): a library fix"
+            run git push --quiet origin main
+            refused "release demo-core first" demo patch
           else
             run git commit --quiet --allow-empty -m "feat: greet louder"
             run git push --quiet origin main
@@ -267,11 +345,28 @@ jobs:
               exit 1
             fi
           fi
-          # each tag as release.yml and publish.yml read it, at its own commit
+          # a commit CI never ran on, a release otherwise: refused until pushed
+          if [ ${{ matrix.kind }} = workspace ]; then
+            echo "change" >> packages/demo/README.md
+            run git commit --quiet -am "fix(cli): unpushed"
+            args=(demo patch)
+          else
+            run git commit --quiet --allow-empty -m "fix: unpushed"
+            args=(patch)
+          fi
+          if out=$(run just release "${args[@]}" 2>&1); then
+            echo "::error::a release of an unpushed main was not refused" >&2
+            exit 1
+          fi
+          grep -q "main is not origin/main" <<< "$out"
+          git reset --quiet --hard origin/main
+          # each tag as publish.yml reads it, at its own commit
           for tag in $(git tag); do
             git checkout --quiet "$tag"
-            read -r package folder version < <(run .github/package-tag.sh "$tag")
+            read -r package folder version main < <(run .github/package-tag.sh "$tag")
             test "$package-v$version" = "$tag" || test "v$version" = "$tag"
+            # the main package: a single one, or the member marked (demo); never the library
+            test "$main" = "$([ "$package" = demo-core ] && echo false || echo true)"
             run .github/release-notes.sh "$folder/CHANGELOG.md" "$version" > /dev/null
           done
           git checkout --quiet main

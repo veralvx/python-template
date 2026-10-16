@@ -1,0 +1,162 @@
+# The main package's release tag publishes its OCI image to GHCR, as ghcr.io/<owner>/<repository>:
+# the flake's `image` (nix/image.nix, of its default: the main package's command) built on each
+# Linux architecture, run once, pushed per architecture, then joined under one multi-architecture
+# tag, <version> (and `latest` while it is the main package's highest release). The job's token
+# pushes: no secret stored. A first push is private (GHCR's default): make the package public in its
+# settings once. The per-architecture tags (<version>-amd64, <version>-arm64) stay, the
+# multi-architecture tag's parts. Docker Hub too, the same tags, once vars.DOCKERHUB_USERNAME and
+# secrets.DOCKERHUB_TOKEN (an access token that writes) are set: as vars.DOCKERHUB_REPOSITORY, else
+# <username>/<repository>. A Docker Hub failure holds GHCR's release back too; a re-run, once fixed,
+# completes both. Run by hand (workflow_dispatch) on a branch, it builds and runs the image on both,
+# pushing nothing: a rehearsal before the first release; on a tag, it publishes that release again.
+name: Image
+
+on:
+  push:
+    # publish.yml's tags; another member's than the main package's builds nothing
+    tags: ["v[0-9]*", "*-v[0-9]*"]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  tag:
+    name: The tag's package
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      main: ${{ steps.read.outputs.main }}
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Read the tag
+        id: read
+        run: |
+          # the image is the main package's (the flake's default): another member's tag builds
+          # nothing, a command of its own or not
+          read -r _ _ version main < <(.github/package-tag.sh "$GITHUB_REF_NAME")
+          {
+            echo "main=$main"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and run (${{ matrix.arch }})
+    needs: tag
+    # by hand (no tag job), or the main package's tag
+    if: ${{ !failure() && !cancelled() && (github.ref_type != 'tag' || needs.tag.outputs.main == 'true') }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      description: ${{ steps.build.outputs.description }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      - name: Build and run
+        id: build
+        env:
+          TAGGED: ${{ needs.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          version="$(nix eval --raw .#image.imageTag)"
+          # a tag's version is its package's (package-tag.sh), the image's tag
+          if [[ -n $TAGGED && $TAGGED != "$version" ]]; then
+            echo "::error::$GITHUB_REF_NAME, but its pyproject.toml declares $version" >&2
+            exit 1
+          fi
+          # streamed into docker: no compressed copy of the closure in the store
+          stream="$(nix build --no-link --print-out-paths .#image.stream)"
+          "$stream" | docker load
+          loaded="$(nix eval --raw .#image.imageName):$version"
+          # the image as a user runs it: its entrypoint, as its user
+          expected="$(nix eval --raw .#default.meta.mainProgram) $version"
+          actual="$(docker run --rm --pull never "$loaded" --version)"
+          if [[ $actual != "$expected" ]]; then
+            echo "::error::--version gave '$actual', expected '$expected'" >&2
+            exit 1
+          fi
+          echo "description=$(nix eval --raw .#default.meta.description)" >> "$GITHUB_OUTPUT"
+
+      - name: Push
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Docker Hub too, when both are set (.github/image-registries.sh): an unset variable or
+          # secret is empty, and no `if:` can read a secret. The username is a variable, as in
+          # Docker's guide: a secret would be masked wherever it appears, GHCR's paths included
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_REPOSITORY: ${{ vars.DOCKERHUB_REPOSITORY }}
+          VERSION: ${{ needs.tag.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          repositories="$(.github/image-registries.sh)"
+          loaded="$(nix eval --raw .#image.imageName):$VERSION"
+          # the list on its own descriptor: no command in the loop can read it away
+          while read -r repository <&3; do
+            docker tag "$loaded" "$repository:$VERSION-$ARCH"
+            docker push "$repository:$VERSION-$ARCH"
+          done 3<<< "$repositories"
+
+  publish:
+    name: Multi-architecture tag
+    needs: [tag, build]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        # every tag, to tell whether this one is the main package's highest
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Join the architectures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_REPOSITORY: ${{ vars.DOCKERHUB_REPOSITORY }}
+          VERSION: ${{ needs.tag.outputs.version }}
+          DESCRIPTION: ${{ needs.build.outputs.description }}
+        run: |
+          set -euo pipefail
+          repositories="$(.github/image-registries.sh)"
+          prefix="${GITHUB_REF_NAME%"$VERSION"}"
+          # `latest`: the main package's highest final release (PEP 440's normalised form: N.N.N,
+          # maybe .postN), so a patch to an older line leaves it where it is
+          highest="$(git tag --list "${prefix}[0-9]*" | sed "s/^${prefix}//" \
+            | { grep -E '^[0-9]+(\.[0-9]+)*(\.post[0-9]+)?$' || true; } | sort -V | tail -n 1)"
+          # each repository's index from its own pushes: imagetools create's sources must be in
+          # the registry it writes to (its docs). The description is the index's annotation, as
+          # GHCR reads it for a multi-architecture image
+          while read -r repository <&3; do
+            tags=(--tag "$repository:$VERSION")
+            if [[ $VERSION == "$highest" ]]; then tags+=(--tag "$repository:latest"); fi
+            docker buildx imagetools create "${tags[@]}" \
+              --annotation "index:org.opencontainers.image.description=$DESCRIPTION" \
+              "$repository:$VERSION-amd64" "$repository:$VERSION-arm64"
+          done 3<<< "$repositories"

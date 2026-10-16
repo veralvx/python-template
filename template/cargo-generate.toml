@@ -77,6 +77,13 @@ prompt = "PyPI keywords, comma separated (may be empty)"
 default = ""
 regex = '^$|^\s*[A-Za-z0-9][A-Za-z0-9._+-]*(\s*,\s*[A-Za-z0-9][A-Za-z0-9._+-]*)*\s*$'
 
+# Asked only where there is a command to run: bin and workspace. Conditions are Rhai, so
+# `&&` and `!`; a lib never defines the variable, which Liquid then reads as false.
+[conditional.'project_kind != "lib"'.placeholders.container_image]
+type = "bool"
+prompt = "Build the command as an OCI image too (the flake's `image`, published to GHCR by image.yml)?"
+default = true
+
 # --- conditional file selection ----------------------------------------------------------------
 #
 # NOTE: `ignore` entries are literal paths relative to the template root, NOT globs -- a glob
@@ -109,10 +116,17 @@ ignore = [
     "tests/test_cli.py",
     "tests/test_workspace.py",
     "packages",
+    "nix/image.nix",
+    ".github/workflows/image.yml",
+    ".github/image-registries.sh",
 ]
 
 [conditional.'project_kind == "bin"']
 ignore = ["tests/test_workspace.py", "packages"]
+
+# No image: neither its Nix file nor its workflow (a lib has neither: its kind's own ignore).
+[conditional.'project_kind != "lib" && !container_image']
+ignore = ["nix/image.nix", ".github/workflows/image.yml", ".github/image-registries.sh"]
 
 # The workspace keeps its sources in its members under packages/; the root's tests check the
 # workspace as a whole.

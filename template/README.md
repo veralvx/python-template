@@ -7,7 +7,7 @@
 The lock is yours to write, from this machine's uv, and then the first commit -- which `cog check`
 (run by `just checks` and by CI) requires to follow
 [Conventional Commits](https://www.conventionalcommits.org/). `cargo-generate` made the git
-repository; nixpkgs' build of it makes none, so `git init` first if `.git` is missing:
+repository; nixpkgs' build of it makes none, so `git init -b main` first if `.git` is missing:
 
 ```sh
 uv lock
@@ -30,12 +30,25 @@ Then, in whichever order suits you:
   [SECURITY.md](SECURITY.md) and the issue form point to it.
 - Add a pending publisher on [PyPI](https://pypi.org/manage/account/publishing/) for each
   package: this repository, the workflow `publish.yml`, the environment `pypi`. A release tag
-  then publishes without a stored token. {% if project_kind == "workspace" %}The packages are
+  then publishes without a stored token, and its GitHub release follows PyPI's: without the
+  publisher, neither is made. {% if project_kind == "workspace" %}The packages are
   `{{project-name}}` and `{{project-name}}-core`.{% else %}The package is `{{project-name}}`.{% endif %}
+- If you limit the `pypi` environment's deployments (Settings → Environments), admit the release
+  tags, each a rule of ref type Tag -- {% if project_kind == "workspace" %}`{{project-name}}-v*`
+  and `{{project-name}}-core-v*`{% else %}`v*`{% endif %}: the PyPI job runs on the tag, and an
+  environment that refuses it publishes nothing.
+{%- if project_kind != "lib" and container_image %}
+- After the first release, make the image public: GHCR publishes a new package as private (its
+  page, Package settings → Change visibility).
+- To publish the image to Docker Hub too: create its repository there, then set the repository
+  variable `DOCKERHUB_USERNAME` and the secret `DOCKERHUB_TOKEN` (an access token that writes)
+  -- and the variable `DOCKERHUB_REPOSITORY` (`namespace/name`) unless it is
+  `<username>/<this repository's name>`. A Docker Hub failure holds the GHCR release back too.
+{%- endif %}
 - Run `just checks` once to confirm your tools are complete: a step that stops on a missing
   command names it ([CONTRIBUTING.md](CONTRIBUTING.md) lists them; `nix develop` has them all).
-- `just install-hooks`, if you want the lock, ruff, dprint and commit-message checks run by git
-  before each commit and push (opt-in, `.githooks/`).
+- `just install-hooks`, if you want the lock, ruff, the shell, the workflows, dprint and
+  commit-message checks run by git before each commit and push (opt-in, `.githooks/`).
 - Read [AGENTS.md](AGENTS.md) before writing code: every ruff rule is on, and basedpyright runs
   in its strictest mode.
 
@@ -64,6 +77,14 @@ uv tool install {{project-name}}
 ```
 {% endif %}
 With Nix, `nix {% if project_kind == "lib" %}build{% else %}run{% endif %} github:{{github_username}}/{{project-name}}`.
+{%- if project_kind != "lib" and container_image %}
+
+As an OCI image, for Linux on amd64 and arm64:
+
+```sh
+docker run --rm ghcr.io/{{ github_username | downcase }}/{{project-name}} --version
+```
+{%- endif %}
 
 ## Usage
 {% if project_kind == "lib" %}
@@ -101,22 +122,26 @@ assert greeting("Ada") == "Hello, Ada!"
 ## Layout
 
 - `pyproject.toml` -- the workspace: its tool groups and configuration
-- `packages/{{project-name}}/` -- the command line: argument handling only
+- `packages/{{project-name}}/` -- the command line: argument handling only; the main package
+  (`[tool.{{project-name}}] main = true`), the flake's default, its image and the latest release
 - `packages/{{project-name}}-core/` -- the library: everything worth testing
 - `tests/` -- the workspace as a whole
 
 Each member is its own distribution, with its own version, changelog and tag
 (`<package>-v<version>`): `just release <package> <level>`. A new member is a folder under
-`packages/` with its pyproject.toml, README.md and copies of the licence files (its sdist holds
-its folder only); the root's tests and pytest's, ruff's, basedpyright's and coverage's settings
-name the members' folders and import names, so add it there too.
+`packages/` with its pyproject.toml, README.md, `src/` and copies of the licence files (its sdist
+holds its folder only); the root's ruff, basedpyright, pytest and coverage settings name the
+members' folders and import names, so add it there too (`tests/test_workspace.py` checks it). A
+requirement on another member needs `[tool.uv.sources] <name> = { workspace = true }` too: without
+it, uv refuses to lock.
 
 {% endif -%}
 ## Development
 
 This repository uses [`just`](https://github.com/casey/just) to mirror CI locally. `just checks`
-runs what the workflows run -- the lock, ruff, the types, dead code, the tests with their
-coverage gate, dprint, the commit messages, pip-audit, and last the flake's checks:
+runs what the workflows run -- the lock, ruff, the shell, the workflows, the types, dead code, the
+tests with their coverage gate, dprint, the commit messages, pip-audit, and last the flake's
+formatter and checks:
 
 ```sh
 just checks

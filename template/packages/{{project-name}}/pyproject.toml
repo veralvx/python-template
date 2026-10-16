@@ -1,7 +1,7 @@
 [build-system]
-# hatchling 1.26.2: license-files in PEP 639's final form, and metadata older readers take
-# (hatchling's changelog); the flake builds with nixpkgs' own
-requires = ["hatchling>=1.26.2"]
+# hatchling 1.27.0: core metadata 2.4 by default, so License-Expression and License-File
+# (PEP 639) written -- 1.26.x's default, 2.3, holds neither; the flake uses nixpkgs' own
+requires = ["hatchling>=1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -57,6 +57,11 @@ Changelog = "https://github.com/{{github_username}}/{{project-name}}/blob/main/p
 Homepage = "https://github.com/{{github_username}}/{{project-name}}/tree/main/packages/{{project-name}}"
 Issues = "https://github.com/{{github_username}}/{{project-name}}/issues"
 Repository = "https://github.com/{{github_username}}/{{project-name}}"
+
+# this workspace's main package: the flake's default, its image, GitHub's latest release -- the
+# one member so marked, in its own [tool] table (PEP 518: a tool.<name> is <name>'s owner's)
+[tool.{{project-name}}]
+main = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/{{crate_name}}"]

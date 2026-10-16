@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # A release's notes: CHANGELOG.md's first section, up to the second `## ` heading, refused unless
-# it is the version's own (`just release` writes it on top). release.yml's.
+# it is the version's own (`just release` writes it on top). The release workflow's.
 set -euo pipefail
 
 changelog=${1:?usage: release-notes.sh CHANGELOG VERSION}

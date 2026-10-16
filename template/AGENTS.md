@@ -1,6 +1,9 @@
 # AGENTS.md
 
 Repository rules for `{{project-name}}`. These apply to every contributor, human or AI-assisted.
+Adding a dependency or a tool, the tests' rules and the release are
+[CONTRIBUTING.md](CONTRIBUTING.md)'s{% if project_kind == "workspace" %}; the workspace's layout,
+[README.md](README.md)'s{% endif %}.
 
 ## 1. The lint and type policy is the design
 
@@ -14,6 +17,13 @@ leaves out every rule written after the list was made.
 
 **Never add a blanket ignore to silence a new rule.** Either fix the site, or add the ignore to
 `pyproject.toml` with a comment saying why the rule is wrong for this codebase.
+
+The shell is held as the code is: shfmt formats it (`.editorconfig` holds its style) and it
+passes ShellCheck -- a justfile script recipe included: `just shell-check` reads them out of
+`just --dump`, and refuses one that splices a value into its text (it takes arguments). The Nix
+is nixfmt's, the justfile just's own: `nix fmt` formats the Nix, the shell and the justfile;
+`just format` all of it, the code, the Markdown and the TOML too. A script is named `*.sh`, a git
+hook excepted: `.editorconfig` and `nix fmt` reach no other. The workflows pass actionlint.
 
 ## 2. Types: no `Any`
 
@@ -62,7 +72,13 @@ else:  # pragma: no cover -- 3.12
     ...
 ```
 
-## 4. Commits
+## 4. Comments: only what is essential
+
+A comment says what the code cannot: why it is so, the source it follows, the constraint it
+keeps. Make it concise and precise -- a line where a line does -- and never restate the code:
+that is noise, and it goes stale. A change that falsifies a comment rewrites it.
+
+## 5. Commits
 
 [Conventional Commits](https://www.conventionalcommits.org/) are enforced by `cog check` locally
 and in CI. The changelog is generated from the commits (`cliff.toml`), so the subject line is
@@ -80,12 +96,13 @@ The git hooks (`just install-hooks`) check the same before a commit and a push; 
 with `--no-verify`. `git revert` writes `Revert "..."`, which CI refuses: reword it as
 `revert: ...`.
 
-## 5. Before you claim a change is done
+## 6. Before you claim a change is done
 
-Run `just checks`. It is what CI runs: the lock, ruff, the types, dead code, the tests with every
-line and branch covered, dprint, the commit messages, pip-audit, and the flake's checks -- the
-tests and the types again on every supported Python, against the built packages. Reporting
-"done" on a change that has not passed it is the one thing that wastes the most time here.
+Run `just checks`. It is what CI runs: the lock, ruff, the shell, the workflows, the types, dead
+code, the tests with every line and branch covered, dprint, the commit messages, pip-audit, and the
+flake's formatter and checks -- the tests again on every supported Python, against the built
+packages, and the types on each. Reporting "done" on a change that has not passed it is the one
+thing that wastes the most time here.
 
 If a check fails for reasons unrelated to your change, say so explicitly rather than working
 around it -- a broken check that everyone routes around stops protecting anything.

@@ -16,7 +16,7 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "ci"
-    labels:
+    labels: # each created once (Issues > Labels): one the repository lacks is ignored
       - "dependencies"
       - "actions"
     groups:
@@ -29,4 +29,4 @@ updates:
           - "minor"
           - "patch"
     cooldown:
-      default-days: 3 # the one cooldown key GitHub Actions takes
+      default-days: 3 # Dependabot's default too (its options reference), set explicitly

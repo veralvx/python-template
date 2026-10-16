@@ -1,6 +1,6 @@
 #!/bin/sh
-# What fails fastest, so a commit stays quick: the lock, ruff (format and lint), dprint; types,
-# the tests and the rest are `just checks` and CI. Checks the working tree, not just what is
-# staged.
+# What fails fastest, so a commit stays quick: the lock, ruff (format and lint), the shell, the
+# workflows, dprint; types, the tests and the rest are `just checks` and CI. Checks the working
+# tree, not just what is staged.
 set -eu
-just lock-check ruff-checks dprint-check
+just lock-check ruff-checks shell-check actionlint dprint-check

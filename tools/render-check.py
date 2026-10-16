@@ -15,9 +15,11 @@ generation otherwise:
   * do the copies agree -- the workspace members' code, manifests and licence texts against the
     single package's?
   * does each manifest describe its layout: the Pythons, the licence files, the kind?
+  * are this repository's copies of the template's files still the template's (AGENTS.md, Copies
+    stay copies): the files, the justfiles' shell recipes, dprint's plugins?
 
 An approximation: cargo-generate uses the Rust `liquid` crate, this python-liquid. They agree on
-the subset used here (assign, if/elsif/else, unless, for, split, strip, remove, date), which is
+the subset used here (assign, if/elsif/else, for, split, strip, remove, date, downcase), which is
 why the template stays inside it. One known divergence: after a `-%}` trim tag, python-liquid
 also drops a file's final newline where liquid-rust keeps it -- so whitespace is the smoke
 test's to check, not this.
@@ -30,6 +32,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -71,13 +74,26 @@ BASE_VARS = {
 }
 PYTHONS = ("3.12", "3.13", "3.14")
 
+# A lib is never asked container_image (a conditional placeholder): undefined, as there -- or
+# given anyway on the command line (`-d`), which cargo-generate passes through unasked
+IMAGES = {"bin": (True, False), "lib": (None, True), "workspace": (True, False)}
 CASES = [
     {"project_kind": kind, "license": lic, "python_min": py, **extra}
+    | ({} if image is None else {"container_image": image})
     for kind in ("bin", "lib", "workspace")
+    for image in IMAGES[kind]
     for lic in ("MIT OR Apache-2.0", "MIT", "Apache-2.0")
     for py in PYTHONS
     for extra in ({}, {"author_email": "", "keywords": ""})
 ]
+
+
+def holds(expr: str, vars_: dict[str, object]) -> bool:
+    """A conditional's Rhai expression -- comparisons, `&&`, `||`, `!` -- over the answers."""
+    python = expr.replace("&&", " and ").replace("||", " or ")
+    python = re.sub(r"!(?!=)", " not ", python)
+    names = {k.replace("-", "_"): v for k, v in vars_.items()}
+    return bool(eval(python, {"__builtins__": {}}, names))  # noqa: S307 - our own config's
 
 # `{{project-name}}` is valid for the Rust liquid crate but the dash parses as subtraction in
 # python-liquid, so rewrite the identifier inside tags only -- never in prose that mentions it.
@@ -86,6 +102,41 @@ TAG = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.DOTALL)
 
 def normalise(text: str) -> str:
     return TAG.sub(lambda m: m.group(0).replace("project-name", "project_name"), text)
+
+
+# The template's files this repository keeps a copy of, byte for byte (and mode): not rendered here,
+# so each original must render to itself
+COPIES = (
+    "cog.toml",
+    "cliff.toml",
+    ".editorconfig",
+    ".github/release-notes.sh",
+    ".githooks/commit-msg",
+    ".githooks/pre-push",
+    ".github/workflows/style-check-dprint.yml",
+    ".github/workflows/style-check-cocogitto.yml",
+    ".github/workflows/dependabot-automerge.yml",
+)
+# the justfile recipes both justfiles hold, the same
+COPIED_RECIPES = ("shell-check", "shfmt", "shfmt-recipes")
+
+
+def recipe(justfile: pathlib.Path, name: str) -> str | None:
+    """A recipe's text: its comments and attributes, its line, its body (blank lines included, to
+    the next line at the margin)."""
+    lines = justfile.read_text().splitlines()
+    for i, line in enumerate(lines):
+        if re.match(rf"@?{re.escape(name)}(\s[^:]*)?:(?!=)", line):  # `:=`: an assignment
+            start = i
+            while start > 0 and lines[start - 1].startswith(("#", "[")):
+                start -= 1
+            end = i + 1
+            while end < len(lines) and (not lines[end] or lines[end][0].isspace()):
+                end += 1
+            while end > i + 1 and not lines[end - 1].strip():
+                end -= 1
+            return "\n".join(lines[start:end])
+    return None
 
 
 def matches_any(rel: str, globs: list[str]) -> bool:
@@ -97,8 +148,11 @@ def matches_any(rel: str, globs: list[str]) -> bool:
 def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one gate, read top to bottom
     cfg = tomllib.loads(CONFIG.read_text())
     excluded = cfg["template"].get("exclude", [])
-    placeholders = cfg["placeholders"]
     conditionals = cfg.get("conditional", {})
+    # the prompts, those asked under a condition among them
+    placeholders = cfg["placeholders"] | {
+        name: spec for section in conditionals.values() for name, spec in section.get("placeholders", {}).items()
+    }
     env = Environment()
     failures: list[str] = []
 
@@ -163,6 +217,38 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one gate, read top to botto
                 fail(f"{copy.relative_to(TEMPLATE)} differs from the root's {name}")
     print("  checked the members' licence files")
 
+    # This repository's copies are the template's: the files (an original holding Liquid would
+    # render to something else), the shell recipes, dprint's plugins.
+    print("== copies of the template's files")
+    for rel in COPIES:
+        original, copy = TEMPLATE / rel, ROOT / rel
+        if not copy.is_file() or not original.is_file():
+            fail(f"{rel}: missing, here or in template/")
+            continue
+        if copy.read_bytes() != original.read_bytes():
+            fail(f"{rel} differs from template/{rel}: change the original, then copy it")
+        if os.access(copy, os.X_OK) != os.access(original, os.X_OK):
+            fail(f"{rel}: executable here or in template/, not both")
+        if not matches_any(rel, excluded) and TAG.search(original.read_text()):
+            fail(f"template/{rel} holds Liquid: its copy here would not be what it renders to")
+    for name in COPIED_RECIPES:
+        mine, theirs = recipe(ROOT / "justfile", name), recipe(TEMPLATE / "justfile", name)
+        if mine is None or theirs is None:
+            fail(f"justfile recipe {name}: missing, here or in template/")
+        elif mine != theirs:
+            fail(f"justfile recipe {name} differs from template/justfile's")
+    plugins = []
+    for d in (ROOT, TEMPLATE):
+        # JSONC: a whole-line comment dropped; one after a value is left to fail here
+        try:
+            text = re.sub(r"(?m)^\s*//.*$", "", (d / "dprint.json").read_text())
+            plugins.append(json.loads(text)["plugins"])
+        except (json.JSONDecodeError, KeyError) as error:
+            fail(f"{d / 'dprint.json'}: no plugins read ({error!r})")
+    if len(plugins) == 2 and plugins[0] != plugins[1]:
+        fail("dprint.json's plugins are not template/dprint.json's")
+    print(f"  checked {len(COPIES)} files, {len(COPIED_RECIPES)} recipes, the plugins")
+
     nix = shutil.which("nix-instantiate")
     # the output's files: cargo-generate copies neither its config nor its hook scripts
     hooks = {name for names in cfg.get("hooks", {}).values() for name in names}
@@ -184,7 +270,7 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one gate, read top to botto
     reserved = {
         "if", "elsif", "else", "endif", "unless", "endunless", "for", "endfor", "in", "assign",
         "and", "or", "contains", "true", "false", "nil", "empty", "forloop", "last", "first",
-        "now", "strip", "split", "replace", "remove", "date", "raw", "endraw",
+        "now", "strip", "split", "replace", "remove", "date", "raw", "endraw", "downcase",
     }  # fmt: skip
     refs = 0
     for path in files:
@@ -215,18 +301,20 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one gate, read top to botto
     for case in CASES:
         vars_ = {**BASE_VARS, **case}
         vars_["project_name"] = vars_["project-name"]
+        image = case.get("container_image") is True and case["project_kind"] != "lib"
         label = f"{case['project_kind']}/{case['license']}/{case['python_min']}" + (
             "/bare" if case.get("author_email") == "" else ""
-        )
+        ) + {None: "", True: "/image", False: "/no-image"}[case.get("container_image")]
         ignored: list[str] = []
         for expr, section in conditionals.items():
-            m = re.fullmatch(r"(\w+)\s*==\s*\"([^\"]+)\"", expr)
-            if not m:
-                fail(f"harness cannot evaluate conditional {expr!r}")
-            elif str(vars_.get(m.group(1))) == m.group(2):
-                ignored.extend(section.get("ignore", []))
+            try:
+                if holds(expr, vars_):
+                    ignored.extend(section.get("ignore", []))
+            except Exception as exc:  # noqa: BLE001 - report and continue
+                fail(f"harness cannot evaluate conditional {expr!r}: {exc}")
 
         rendered = 0
+        outputs: dict[str, str] = {}
         for path in files:
             rel = str(path.relative_to(TEMPLATE))
             # NOT skipping `ignored` files, though cargo-generate removes them before rendering:
@@ -243,6 +331,7 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one gate, read top to botto
                 if leftovers := TAG.findall(out):
                     fail(f"{label}: {rel}: unexpanded template syntax: {leftovers[:3]}")
                 rendered += 1
+            outputs[rel] = out
             try:
                 if path.suffix == ".toml":
                     tomllib.loads(out)
@@ -311,6 +400,12 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one gate, read top to botto
             fail(f"{label}: packages/ kept for {kind}")
         if any(f.startswith("src/") for f in rendered_files) == (kind == "workspace"):
             fail(f"{label}: src/ dropped for {kind}")
+        # the image: its Nix file, its workflow and the flake's output, all or none
+        for name in ("nix/image.nix", ".github/workflows/image.yml", ".github/image-registries.sh"):
+            if (name in rendered_files) != image:
+                fail(f"{label}: {name} {'missing' if image else 'kept'}")
+        if ("nix/image.nix" in outputs["flake.nix"]) != image:
+            fail(f"{label}: flake.nix's image output does not match container_image")
         print(f"== render {label}: {rendered} files, manifests checked")
 
     print()

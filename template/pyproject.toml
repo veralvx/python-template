@@ -4,9 +4,9 @@
 # tools' configuration for every member.
 {%- else -%}
 [build-system]
-# hatchling 1.26.2: license-files in PEP 639's final form, and metadata older readers take
-# (hatchling's changelog); the flake builds with nixpkgs' own
-requires = ["hatchling>=1.26.2"]
+# hatchling 1.27.0: core metadata 2.4 by default, so License-Expression and License-File
+# (PEP 639) written -- 1.26.x's default, 2.3, holds neither; the flake uses nixpkgs' own
+requires = ["hatchling>=1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -93,8 +93,14 @@ dev = [
 # `just audit`'s and security.yml's: pip-audit over the exported lock, in an environment of its
 # own -- not the dev group, so not in `uv sync`'s
 audit = ["pip-audit==2.10.0"]
-# `just changelog`'s and `just release`'s: git-cliff, run as `audit` is
-release = ["git-cliff==2.13.1"]
+# `just changelog`'s and `just release`'s: git-cliff, run as `audit` is{% if project_kind == "workspace" %}; packaging, the
+# release's check of the members' requirements{% endif %}
+release = [
+    "git-cliff==2.13.1",
+{%- if project_kind == "workspace" %}
+    "packaging==26.1",
+{%- endif %}
+]
 
 [tool.uv]
 # uv too is nixpkgs' (the `pins` check): its resolver writes and checks the lock, and setup-uv
@@ -124,10 +130,8 @@ src = ["src"]
 # (the `pins`) adds rules: read them, don't silence them.
 select = ["ALL"]
 ignore = [
-    # ruff's own docs: these conflict with `ruff format`, which owns trailing commas and implicit
-    # string concatenation
+    # ruff's own docs: it conflicts with `ruff format`, which owns trailing commas
     "COM812",
-    "ISC001",
 ]
 
 [tool.ruff.lint.pydocstyle]
@@ -135,8 +139,9 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 # Tests: assert is the tool; literal expectations are the point; a docstring per test would
-# repeat its name; the test folders are no packages (pytest's importlib mode needs none).
-"**/tests/**" = ["S101", "PLR2004", "D", "INP001"]
+# repeat its name (D1: one written still keeps the convention); the test folders are no
+# packages (pytest's importlib mode needs none).
+"**/tests/**" = ["S101", "PLR2004", "D1", "INP001"]
 
 [tool.basedpyright]
 # every rule, warnings failing: the strictest mode, as the code starts clean
@@ -169,8 +174,11 @@ testpaths = ["tests"]
 {%- endif %}
 # importlib: nothing put on sys.path, so the tests import the package as installed -- the
 # editable one here, the built one in the flake's checks
-addopts = ["--strict-markers", "--strict-config", "-ra", "--import-mode=importlib"]
-xfail_strict = true
+addopts = ["-ra", "--import-mode=importlib"]
+# every strictness pytest has, as errors: unknown options and markers, an xfail that passes, a
+# repeated parametrize id -- and any it adds, on an upgrade. Set here: pytest 9.0 ignores
+# --strict-markers and --strict-config in addopts (pytest-dev/pytest#14442, fixed in 9.1)
+strict = true
 filterwarnings = ["error"] # a warning fails the suite rather than scrolling by
 timeout = 300
 

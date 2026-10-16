@@ -1,8 +1,8 @@
-# git-cliff 2.13.1: the changelog (`just changelog`, written by `just release`), from the commits
-# -- in a workspace, a package's: those touching its folder. The recipes pass what is project-
-# specific: the repository (Repository in pyproject.toml), the tags (`v1.2.3`, a workspace's
-# `name-v1.2.3`), a member's folder. Grouped by commit type; a commit's subject is its entry,
-# written for the package's users.
+# git-cliff (a generated project pins 2.13.1): the changelog (`just changelog`, written by
+# `just release`), from the commits -- in a workspace, a package's: those touching its folder.
+# The recipes pass what is project-specific: the repository and, in a generated project, the tags
+# (`v1.2.3`, a workspace's `name-v1.2.3`) and a member's folder. Grouped by commit type; a
+# commit's subject is its entry, written for its users.
 
 [changelog]
 header = """

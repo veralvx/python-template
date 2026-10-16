@@ -5,8 +5,6 @@ on:
     paths:
       - "**/pyproject.toml"
       - "uv.lock"
-      - "**/Dockerfile"
-      - "**/docker-compose*.yml"
       - ".github/workflows/**"
 
 permissions:
@@ -17,6 +15,13 @@ permissions:
 # for public repositories but requires GitHub Advanced Security on a
 # private one. On a private repo without it, this job fails rather than
 # skipping -- delete the workflow or enable the feature.
+#
+# What it reads: uv.lock reaches the dependency graph only through
+# Dependabot's graph jobs (GitHub's changelog, 2026-04-23), seen on the
+# default branch alone: whether a pull request's lock change is reviewed is
+# unmeasured, so security.yml's pip-audit holds the lock. Advisories match
+# actions by semantic version alone, not the commits these are pinned to
+# ("Dependency graph supported package ecosystems").
 jobs:
   dependency-review:
     name: License & Security Check

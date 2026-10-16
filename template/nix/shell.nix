@@ -16,6 +16,9 @@ pkgs.mkShell {
     pkgs.cocogitto
     pkgs.nixfmt
     pkgs.shellcheck
+    pkgs.shfmt
+    pkgs.actionlint
+    pkgs.jq
   ];
   env = {
     UV_PYTHON = "${python}/bin/python";

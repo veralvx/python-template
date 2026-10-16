@@ -1,3 +1,5 @@
+# The action installs dprint's latest release, attested; the formatting is
+# the plugins', pinned in dprint.json.
 name: Dprint Formatting Checks
 
 on:
@@ -19,8 +21,10 @@ on:
   # reports, and a required check that never reports blocks the merge
   pull_request:
 
+# a pull request's newest run cancels its older ones; any other run, a group of its own: every
+# commit on main checked (in a shared group, a pending run gives way to the newest: the default)
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
